@@ -2,7 +2,7 @@
 
 This repository contains data analysis projects created in R, focusing on statistical methods and real data analysis.
 
-## 📂 Project Structure
+## Project Structure
 
 ### Time Series Analysis
 Complete analysis and forecasting of time-dependent data.
@@ -19,9 +19,9 @@ Statistical modeling of time-to-event data with a focus on censored observations
 * **Model Selection:** Variable selection using AIC, BIC, and FIC criteria.
 
 
-## 🛠 Tools & Technologies
+## Tools & Technologies
 * **Language:** R
 * **Core Packages:** `tidyverse` (dplyr, ggplot2), `survival`, `forecast`, `astsa`, `fpp2`, `timereg`.
 
-## 📄 Notes
-Reports and code were developed as part of university coursework and are written in **Polish**. For accessibility, the repository structure and this documentation are provided in **English**.
+## Notes
+Reports and code were developed as part of university coursework and are written in **Polish**. For accessibility, the repository structure and this documentation are provided in English.
