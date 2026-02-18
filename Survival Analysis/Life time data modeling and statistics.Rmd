@@ -1,0 +1,971 @@
+---
+title: "Modelowanie i statystyka danych czasu życia"
+author: "Zuzanna Klaman"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    fig_caption: true
+    fig_width: 9
+    fig_height: 8
+    number_sections: true
+  word_document:
+    toc: true
+  html_document:
+    toc: true
+    df_print: paged
+header-includes:
+- \usepackage[OT4]{polski}
+- \usepackage[utf8]{inputenc}
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage{subfig}
+- \usepackage{enumitem}
+- \setlist{leftmargin=*}
+- \sloppy
+subtitle: Analiza przeżycia
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE, cache=TRUE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+knitr::opts_chunk$set(dev = "CairoPDF") 
+library(arules)
+library(dplyr)
+library(knitr)
+library(ipred)
+
+options(encoding = "UTF-8")
+```
+
+\newpage
+
+# Charakterystyka i symulacja rozkładu Exponentiated Weibull
+
+## Definicje matematyczne rozkładu EW
+
+Rozważamy rozkład *exponentiated-Weibull*, stanowiący uogólnienie klasycznego rozkładu Weibulla. Charakteryzuje się on trzema parametrami: $\alpha$, $\beta$ oraz $\gamma$, które przyjmują wartości dodatnie ($\alpha > 0$, $\beta > 0$, $\gamma > 0$). Poniżej przedstawiono podstawowe funkcje opisujące ten rozkład: funkcję gęstości prawdopodobieństwa, dystrybuantę, dystrybuantę odwrotną oraz funkcję hazardu.
+
+\vspace{0.5cm}
+
+* Funkcja gęstości
+
+\begin{equation}
+f(t,\alpha, \beta, \gamma) = 
+\frac{\alpha \cdot \gamma}{\beta} \cdot
+\left(\frac{t}{\beta}\right)^{\alpha - 1} \cdot
+\left(1 - \exp\left[-\left(\frac{t}{\beta}\right)^{\alpha}\right]\right)^{\gamma - 1} \cdot
+\exp\left[-\left(\frac{t}{\beta}\right)^{\alpha}\right]
+\end{equation}
+
+\vspace{0.3cm}
+
+```{r}
+f_EW <- function(t, alpha, beta, gamma){
+  (alpha * gamma / beta) * (t / beta)^(alpha - 1) *
+    (1 - exp(-(t / beta)^alpha))^(gamma - 1) * exp(-(t / beta)^alpha)
+}
+```
+
+\vspace{0.5cm}
+
+* Dystrybuanta
+
+\begin{equation}
+F(t, \alpha, \beta, \gamma) = 
+\left(1 - \exp\left[-\left(\frac{t}{\beta}\right)^{\alpha}\right]\right)^{\gamma}
+\end{equation}
+
+\vspace{0.3cm}
+
+```{r}
+F_EW <- function(t, alpha, beta, gamma){
+  (1 - exp(-(t / beta)^alpha))^gamma
+}
+```
+
+\vspace{0.5cm}
+
+* Dystrybuanta odwrotna
+
+\begin{equation}
+Q(p) = 
+\beta \cdot 
+\left(-\ln\left(1 - p^{\frac{1}{\gamma}}\right)\right)^{\frac{1}{\alpha}}
+\end{equation}
+
+\vspace{0.3cm}
+
+```{r}
+Q_EW <- function(p, alpha, beta, gamma){
+  beta * (- log(1 - p ^ (1 / gamma))) ^ (1 / alpha)
+}
+```
+
+\newpage
+
+* Funkcja hazardu
+
+\begin{equation}
+h(t,\alpha, \beta, \gamma) = 
+\frac{f(t,\alpha, \beta, \gamma)}{S(t)} = 
+\frac{f(t,\alpha, \beta, \gamma)}{1 - \left(1 - \exp\left[-\left(\frac{t}{\beta}\right)^{\alpha}\right]\right)^{\gamma}}
+\end{equation}
+
+```{r}
+S_EW <- function(t, alpha, beta, gamma){
+  1 - F_EW(t, alpha, beta, gamma)
+}
+
+h_EW <- function(t, alpha, beta, gamma){
+  f_EW(t, alpha, beta, gamma) / S_EW(t, alpha, beta, gamma)
+}
+```
+gdzie $S\_EW$ to funkcja przeżycia dla rozkładu $\mathcal{EW}$.
+
+\newpage
+
+## Analiza kształtów funkcji hazardu
+
+W zależności od przyjętych wartości parametrów $\alpha$, $\beta$ oraz $\gamma$, funkcja hazardu $h(t)$ rozkładu $\mathcal{EW}$ może przyjmować różnorodne kształty. Poniższy wykres pokazuje, jak zmiana parametrów wpływa na kształt tej funkcji, prezentując pięć odmiennych przebiegów dla różnych ich zestawów.
+
+```{r F:hazard, echo=FALSE, fig.width=8, fig.height=6, fig.align='center', message=FALSE, warning=FALSE, fig.cap="Wykres funkcji hazardu rozkładu \\(\\mathcal{EW}\\) dla różnych parametrów"}
+library(ggplot2)
+library(dplyr)
+
+t <- seq(0.01, 10, length.out = 500)
+
+parametry <- list(
+  A = c(alpha = 0.5, beta = 2, gamma = 0.75),
+  B = c(alpha = 1, beta = 2, gamma = 1),
+  C = c(alpha = 1.5, beta = 3, gamma = 3),
+  D = c(alpha = 1.5, beta = 4, gamma = 0.125),
+  E = c(alpha = 0.75, beta = 1, gamma = 2)
+)
+
+dane.1 <- data.frame(t = t, y = h_EW(t, parametry$A["alpha"], parametry$A["beta"], parametry$A["gamma"]))
+dane.2 <- data.frame(t = t, y = h_EW(t, parametry$B["alpha"], parametry$B["beta"], parametry$B["gamma"]))
+dane.3 <- data.frame(t = t, y = h_EW(t, parametry$C["alpha"], parametry$C["beta"], parametry$C["gamma"]))
+dane.4 <- data.frame(t = t, y = h_EW(t, parametry$D["alpha"], parametry$D["beta"], parametry$D["gamma"]))
+dane.5 <- data.frame(t = t, y = h_EW(t, parametry$E["alpha"], parametry$E["beta"], parametry$E["gamma"]))
+
+colors <- c('(0.5, 2, 0.75)' = '#038cfc', '(1, 2, 1)' = '#f50a29', '(1.5, 3, 3)' = '#60eb67', '(1.5, 4, 0.125)' = '#faf60f', 
+            '(0.75, 1, 2)' = '#951ceb')
+
+ggplot() +
+  geom_line(data = dane.1, aes(x = t, y = y, color = '(0.5, 2, 0.75)'), size = 1) +
+  geom_line(data = dane.2, aes(x = t, y = y, color = '(1, 2, 1)'), size = 1) +
+  geom_line(data = dane.3, aes(x = t, y = y, color = '(1.5, 3, 3)'), size = 1) +
+  geom_line(data = dane.4, aes(x = t, y = y, color = '(1.5, 4, 0.125)'), size = 1) +
+  geom_line(data = dane.5, aes(x = t, y = y, color = '(0.75, 1, 2)'), size = 1) +
+  scale_color_manual(values = colors, name = "Parametry") +
+  theme(legend.position = "right") + xlim(0, 10) + ylim(0, 1) + theme_minimal() + labs(y = "wartość funkcji hazardu", x = "t")
+```
+
+Jak widać na wykresie (zobacz rysunek \ref{fig:F:hazard}), funkcja hazardu rozkładu $\mathcal{EW}$ przyjmuje różnorodne formy w zależności od parametrów. Obok klasycznych przebiegów, takich jak malejący, stały i rosnący, występują również bardziej złożone, niemonotoniczne kształty. 
+
+\newpage
+
+## Generator liczb losowych
+
+Poniżej widoczna jest deklaracja funkcji generującej zmiennych losowych z rozkładu $\mathcal{EW}$. Wykorzystano do tego funkcję dystrybuanty odwrotnej
+
+\begin{equation*}
+Q(p) = 
+\beta \cdot 
+\left(-\ln\left(1 - p^{\frac{1}{\gamma}}\right)\right)^{\frac{1}{\alpha}}
+\end{equation*}
+
+Docelowa funkcja ($losowe\_EW$) przekształca losowe wartości z przedziału $(0,1)$ na wartości z rozkładu $\mathcal{EW}$. 
+
+\vspace{0.3cm}
+
+```{r}
+losowe_EW <- function(n, alpha, beta, gamma){
+  u <- runif(n)
+  x <- Q_EW(u, alpha, beta, gamma)
+  return(x)
+}
+```
+
+\newpage
+
+## Porównanie teoretycznej gęstości z empirycznym histogramem
+
+Porównamy losowo wygenerowane danye z krzywą gęstości rozkładu $\mathcal{EW}$. Wygenerowano próbki losowe o dwóch różnych rozmiarach ($n = 50$ i $n = 100$) dla dwóch odmiennych zestawów parametrów - $(1.5, 2, 0.75)$ oraz $(1, 2, 1)$. Na histogramy gęstości, utworzone z tych próbek, nałożono teoretyczne krzywe gęstości prawdopodobieństwa.
+
+```{r F:histogramy, echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(gridExtra)
+library(grid)
+
+parametry <- list(
+  `EW(1.5, 2, 0.75)` = list(alpha=1.5, beta=2, gamma=0.75),
+  `EW(1, 2, 1)` = list(alpha=1, beta=2, gamma=1)
+)
+rozmiar_n <- c(50, 100)
+
+plot_grobs <- list()
+count <- 1
+
+set.seed(123456) 
+
+for (nazwa_rozkładu in names(parametry)){
+  par <- parametry[[nazwa_rozkładu]]
+  for (n in rozmiar_n){
+    x <- losowe_EW(n, par$alpha, par$beta, par$gamma)
+    
+    dane <- data.frame(x=x)
+    x_g <- seq(min(x), max(x), length.out = 500)
+    gestosc <- f_EW(x_g, par$alpha, par$beta, par$gamma)
+    dane_g <- data.frame(x=x_g, y=gestosc)
+    
+    p <- ggplot(dane, aes(x=x)) +
+      geom_histogram(aes(y=..density..), bins=15, fill="#a8241b", color="black", alpha=0.6) +
+      geom_line(data=dane_g, aes(x=x, y=y), color="#0072B2", size=1) +
+      theme_minimal(base_size=12) +
+      labs(x="x", y="gęstość")
+
+    label <- textGrob(
+      paste0("n = ", n, "  ", nazwa_rozkładu),
+      gp=gpar(fontsize=12),
+      vjust=0
+    )
+    plot_grobs[[count]] <- arrangeGrob(label, p, ncol=1, heights=c(1, 10))
+    count <- count + 1
+  }
+}
+grid.arrange(grobs=plot_grobs, ncol=2)
+```
+
+Analiza czterech powyższych wykresów pozwala sformułować następujące wnioski:
+
+* Dla obu zestawów parametrów widać wyraźnie, że histogramy dla większej próby ($n = 100$) nieco lepiej dopasowują się do teoretycznej krzywej gęstości niż te dla mniejszej próby ($n = 50$). 
+
+* Histogramy dla mniejszych prób charakteryzują się większą losową zmiennością. Widać w nich luki i nieregularności, które znikają przy większej próbie.
+
+\newpage
+
+## Zestawienie statystyk opisowych i wartości teoretycznych
+
+Aby lepiej scharakteryzować wygenerowane próby losowe, wyznaczono dla nich zestaw kluczowych miar statystyki opisowej. Dla każdej z prób obliczono: średnią, medianę, odchylenie standardowe, kwartyl dolny, kwartyl górny, rozstęp oraz wartości minimalną i maksymalną. Dodatkowo w tabeli zamieszczone zostały wartości teoretyczne mediany i kwartyli, które odpowiadają przyjętym parametrom rozkładów.
+
+\vspace{0.5cm}
+
+Wartości podstawowych statystyk opisowych wyznaczono dla czterech przypadków:
+
+- przypadek 1: $\mathcal{EW}(1.5, 2, 0.75)$ dla $n = 50$
+- przypadek 2: $\mathcal{EW}(1.5, 2, 0.75)$ dla $n = 100$
+- przypadek 3: $\mathcal{EW}(1, 2, 1)$ dla $n = 50$
+- przypadek 4: $\mathcal{EW}(1, 2, 1)$ dla $n = 100$
+
+```{r tab:Tabela1, echo = FALSE, message=FALSE, warning=FALSE}
+library(kableExtra)
+
+stat_opisowe <- function(x, alpha, beta, gamma){
+  wynik <- c(mean(x, na.rm = TRUE),
+             median(x, na.rm = TRUE),
+             sd(x, na.rm = TRUE),
+             quantile(x, 0.25, na.rm = TRUE),
+             quantile(x, 0.75, na.rm = TRUE),
+             IQR(x,  na.rm = TRUE),
+             min(x, na.rm = TRUE), 
+             base::max(x, na.rm = TRUE), 
+             range = max(x) - min(x),
+             Q_EW(0.25, alpha, beta, gamma),
+             Q_EW(0.5, alpha, beta, gamma),
+             Q_EW(0.75, alpha, beta, gamma))
+             
+  names(wynik) <- c("mean", "median", "sd", "Q1", "Q3", "IQR", "min", "max", "range",  "Q1 teor.", "mediana teor.", "Q3 teor.")
+  return(wynik)
+}
+
+set.seed(123456) 
+
+przyklad1 <- losowe_EW(50, alpha = 1.5, beta = 2, gamma = 0.75)
+przyklad2 <- losowe_EW(100, alpha = 1.5, beta = 2, gamma = 0.75)
+przyklad3 <- losowe_EW(50, alpha = 1, beta = 2, gamma = 1)
+przyklad4 <- losowe_EW(100, alpha = 1, beta = 2, gamma = 1)
+
+tab1 <- stat_opisowe(przyklad1, alpha = 1.5, beta = 2, gamma = 0.75)
+tab2 <- stat_opisowe(przyklad2, alpha = 1.5, beta = 2, gamma = 0.75)
+tab3 <- stat_opisowe(przyklad3, alpha = 1, beta = 2, gamma = 1)
+tab4 <- stat_opisowe(przyklad4, alpha = 1, beta = 2, gamma = 1)
+
+tabela <- data.frame("przypadek 1" = tab1, "przypadek 2" = tab2, "przypadek 3" = tab3, "przypadek 4" = tab4, 
+                     check.names = FALSE)
+
+kable(tabela, digits = 2, format = "latex", caption = "Statystyki opisowe dla różnych zestawów parametrów \\label{tab:Tabela1}",
+  escape = FALSE, booktabs=TRUE)%>%
+  kable_styling(latex_options = c("hold_position", "striped"))
+```
+
+Na podstawie Tabeli \ref{tab:Tabela1} można zauważyć, że statystyki empiryczne (mediana, Q1, Q3) z wygenerowanych prób są zbliżone do teoretycznych wartości dla tych rozkładów. Dodatkowo, porównując przypadki z różną wielkością próby (np. przypadek $3$ z $n = 50$ i przypadek $4$ z $n = 100$), widać, że większa próba daje wyniki nieco bliższe wartościom teoretycznym.
+
+\newpage
+
+# Symulacja i analiza danych cenzurowanych
+
+## Algorytmy generowania danych cenzurowanych
+
+Zmienne losowe o rozkładzie uogólnionym wykładniczym $\mathcal{GE}(\lambda, \alpha)$ wygenerowano metodą odwróconej dystrybuanty, w której funkcja kwantylowa ma postać:
+
+\begin{equation}
+Q(p) = 
+\frac{-1}{\lambda} \cdot 
+\ln\left(1 - p^{\frac{1}{\alpha}}\right)
+\end{equation}
+
+przy czym losowania dokonano z rozkładu jednostajnego na przedziale $(0,1)$.
+
+```{r, echo=TRUE}
+set.seed(123456)
+
+Q_GE <- function(p, lambda, alpha){
+  -1/lambda * log(1 - p^(1/alpha))
+}
+
+losowe_GE <- function(n, lambda, alpha){
+  u <- runif(n)
+  x <- Q_GE(u, lambda, alpha) 
+  return(x)
+}
+```
+
+```{r, echo=FALSE}
+N_VAL <- 200
+```
+
+### Funkcja do generowania n zmiennych cenzurowanych w przypadku cenzurowania I-go typu.
+
+\vspace{0.2cm}
+
+```{r}
+funkcja_1 <- function(n, lambda, alpha, t0){
+  x <- losowe_GE(n, lambda, alpha)
+  t <- pmin(x, t0)
+  warunek <- ifelse(x <= t0, 1, 0)
+  data.frame(czas = t, cenzura = warunek)
+}
+```
+
+\newpage
+
+### Funkcja do generowania n zmiennych cenzurowanych w przypadku cenzurowania II-go typu.
+
+\vspace{0.2cm}
+
+```{r}
+funkcja_2 <- function(n, lambda, alpha, m){
+  x <- losowe_GE(n, lambda, alpha)
+  posort <- sort(x)
+  dobre <- posort[1:m]
+  ostatnia_wart <- posort[m]
+  zle <- rep(ostatnia_wart, n-m)
+  cenzura <- c(dobre, zle)
+  cenzura2 <- c(rep(1, m), rep(0, n - m))
+  data.frame(czas = cenzura, cenzura = cenzura2)
+}
+```
+
+\vspace{0.5cm}
+
+### Funkcja do generowania n zmiennych cenzurowanych  w przypadku cenzurowania losowego (niezależnego).
+
+Tutaj rozkład czasu cenzurowania jest rozkładem wykładniczym $\mathcal{E}(\eta)$, gdzie $\eta$ jest wartością oczekiwaną rozkładu cenzurowania.
+
+\vspace{0.2cm}
+
+```{r}
+f_wykl <- function(n, eta){
+  dane2 <- rexp(n, 1/eta)
+  return(dane2)
+}
+
+funkcja_3 <- function(n, lambda, alpha, eta){
+  x <- losowe_GE(n, lambda, alpha)
+  c <- f_wykl(n, eta)
+  t <- pmin(x, c)
+  warunek <- ifelse(x <= c, 1, 0)
+  data.frame(czas = t, cenzura = warunek)
+}
+```
+
+\newpage
+
+## Analiza statystyczna wygenerowanych prób
+
+W oparciu o funkcje zaimplementowane powyżej, wygenerowano trzy zbiory danych, po jednym dla każdego z analizowanych typów cenzurowania. Dla każdego zbioru obliczono i przedstawiono wartości statystyk opisowych.
+
+```{r, echo=FALSE}
+tabela_statystyk <- function(dane, tytul_tabeli) {
+  
+  quants <- quantile(dane$czas, probs = c(0.25, 0.5, 0.75))
+  
+  df_stat <- data.frame(
+    Statystyka = c("Całkowita liczba obserwacji",
+                   "Liczba danych niecenzurowanych",
+                   "Liczba danych cenzurowanych",
+                   "Minimum",
+                   "Kwartyl dolny",
+                   "Mediana",
+                   "Kwartyl górny",
+                   "Maksimum"),
+    Wartość = c(as.character(length(dane$czas)),
+                as.character(sum(dane$cenzura == 1)),
+                as.character(sum(dane$cenzura == 0)),
+                round(min(dane$czas), 2),
+                round(quants[1], 2),
+                round(quants[2], 2),
+                round(quants[3], 2),
+                round(max(dane$czas), 2))
+  )
+  
+  kable(df_stat, format = "latex", caption = tytul_tabeli, booktabs=TRUE)%>%
+    kable_styling(latex_options = c("striped", "hold_position"))
+}
+```
+
+\vspace{0.5cm}
+
+* Cenzurowanie I-go typu
+
+\vspace{0.2cm}
+
+```{r}
+n_a <- 200 ; lambda_a <- 1.5 ; alpha_a <- 2 ; t0_a <- 1.8
+dane_a <- funkcja_1(n_a, lambda_a, alpha_a, t0_a)
+```
+
+```{r tab:Tabela2, echo=FALSE}
+tabela_statystyk(dane_a, tytul_tabeli = "Statystyki dla cenzurowania I-go typu (n = 200, $t_{0}$ = 1.8) \\label{tab:Tabela2}")
+```
+
+\vspace{0.6cm}
+
+* Cenzurowanie II-go typu
+
+\vspace{0.2cm}
+
+```{r}
+n_b <- 200; lambda_b <- 1.5; alpha_b <- 2; m_b <- 175 
+dane_b <- funkcja_2(n_b, lambda_b, alpha_b, m_b)
+```
+
+```{r tab:Tabela3, echo=FALSE}
+tabela_statystyk(dane_b, tytul_tabeli = "Statystyki dla cenzurowania II-go typu (n = 200, m = 175) \\label{tab:Tabela3}")
+```
+
+\newpage
+
+* Cenzurowanie losowe
+\vspace{0.2cm}
+
+```{r}
+n_c <- 200; lambda_c <- 1.5; alpha_c <- 2; eta_c <- 4.0 
+dane_c <- funkcja_3(n_c, lambda_c, alpha_c, eta_c)
+```
+
+```{r tab:Tabela4, echo=FALSE}
+tabela_statystyk(dane_c, tytul_tabeli = "Statystyki dla cenzurowania losowego (n = 200, $\\eta$ = 4.0) \\label{tab:Tabela4}")
+```
+\vspace{0.5cm}
+
+Tabele dobrze odzwierciedlają definicje cenzurowania poszczególnych typów: W cenzurowaniu II-go typu (Tabela \ref{tab:Tabela3}) liczba danych niecenzurowanych jest stała i równa parametrowi $m = 175$. W cenzurowaniu I-go typu (Tabela \ref{tab:Tabela2}) maksymalny czas jest odgórnie określony przez $t_{0} = 1.8$.
+Cenzurowanie losowe (Tabela \ref{tab:Tabela4}) pozwoliło na zaobserwowanie znacznie większych wartości niż w pozostałych dwóch przypadkach, gdzie zakres był ograniczony przez czas lub liczbę awarii.
+
+\newpage
+
+## Porównawcza analiza opisowa czasu remisji choroby
+
+Przeprowadzono analizę opisową danych pochodzących z badania klinicznego. W badaniu wzięło udział $40$ pacjentów, których losowo przydzielono do dwóch równolicznych grup. Obserwację prowadzono przez okres jednego roku, monitorując czas do wystąpienia remisji choroby. Zebrane dane są przykładem danych cenzurowanych I-go typu. Pacjenci, u których remisja choroby nastąpiła przed upływem roku, są obserwacjami kompletnymi - niecenzurowanymi. Natomiast pacjenci, u których remisja nie wystąpiła w ciągu roku, są obserwacjami cenzurowanymi.
+
+```{r, echo=FALSE}
+czasy_remisji_A <- c(0.03345514, 0.08656403, 0.08799947, 0.24385821, 0.27755032,
+                     0.40787247, 0.58825664, 0.64125620, 0.90679161, 0.94222208)
+czasy_cenzury_A <- rep(1.0, 10)
+
+dane_A <- data.frame(czas = c(czasy_remisji_A, czasy_cenzury_A), cenzura = c(rep(1, 10), rep(0, 10)))
+
+czasy_remisji_B <- c(0.03788958, 0.12207257, 0.20319983, 0.24474299, 0.30492413,
+                     0.34224462, 0.42950144, 0.44484582, 0.63805066, 0.69119721)
+czasy_cenzury_B <- rep(1.0, 10)
+
+dane_B <- data.frame(czas = c(czasy_remisji_B, czasy_cenzury_B), cenzura = c(rep(1, 10), rep(0, 10))
+)
+```
+
+\vspace{0.6cm}
+
+* LEK A
+
+```{r tab:Tabela5, echo=FALSE}
+tabela_statystyk(dane_A, "Statystyki opisowe dla Leku A (n = 20) \\label{tab:Tabela5}")
+```
+
+\vspace{0.6cm}
+
+* LEK B
+
+```{r tab:Tabela6, echo=FALSE}
+tabela_statystyk(dane_B, "Statystyki opisowe dla Leku B (n = 20) \\label{tab:Tabela6}")
+```
+
+Analiza uzyskanych wyników sugeruje, że chociaż oba leki wykazują podobną skuteczność ogólną, lek B, którego statystyki widoczne są w Tabeli \ref{tab:Tabela6}, prowadzi do remisji w krótszym czasie. Świadczy o tym niższa mediana czasu do osiągnięcia remisji w grupie B w porównaniu z grupą A (wyniki widoczne w Tabeli \ref{tab:Tabela5}).
+
+\newpage
+
+# Estymacja parametrów i ocena właściwości estymatorów
+
+## Estymacja NW i przedziały ufności dla cenzurowania typu I
+
+Przeanalizujemy ponownie powyższe dane, przyjmując, że są one realizacjami zmiennych z rozkładu wykładniczego.
+
+### Wyznaczenie ocen NW średniego czasu do remisji
+
+Oszacowania średniego czasu do remisji choroby dla pacjentów z różnych grup uzyskano przy użyciu metody największej wiarygodności. W przypadku danych cenzurowanych I-go typu metoda ta opiera się na następującym wzorze:
+
+\begin{equation}
+\hat{\mu} = \dfrac{\sum_{i=1}^{R} X_{(i)} + (n - R)t_0}{\sum_{i=1}^{n} \mathbf{1}(X_i \le t_0)}
+\end{equation}
+
+```{r tab:Tabela7, echo=FALSE}
+R_A <- sum(dane_A$cenzura == 1) 
+T_czas_A <- sum(dane_A$czas)
+mu_hat_A <- T_czas_A / R_A
+
+R_B <- sum(dane_B$cenzura == 1)
+T_czas_B <- sum(dane_B$czas)
+mu_hat_B <- T_czas_B / R_B
+
+tabela_nw <- data.frame(
+  Estymator = c("$\\hat{\\mu}$ - NW średniego czasu do remisji"),
+  "Lek A" = c(mu_hat_A), "Lek B" = c(mu_hat_B))
+
+kable(tabela_nw, format = "latex", booktabs = TRUE, caption = "Oszacowanie największej wiarygodności \\label{tab:Tabela7}",
+  col.names = c("Estymator", "Lek A", "Lek B"), digits = 7, align = 'lcc', escape = FALSE)%>%
+  kable_styling(latex_options = c("hold_position"))
+
+```
+
+Na podstawie Tabeli \ref{tab:Tabela7}, oszacowany średni czas do remisji choroby jest krótszy dla leku B niż dla leku A. Sugeruje to, że lek B, działa szybciej i prowadzi do remisji w krótszym okresie niż lek A.
+
+### Konstrukcja przedziałów ufności
+
+Wyznaczono realizację przedziałów ufności, na poziomie ufności  \( 1 - \alpha \), przyjmując \( \alpha = 0{,}05 \) oraz \( \alpha = 0{,}01 \). Wykorzystano poniższe wzory:
+  
+\begin{equation}
+\tilde{T}_L = \frac{-\log\left(1 - T_L\right)}{t_0}
+\end{equation}
+
+\begin{equation}
+\tilde{T}_u = \frac{-\log\left(1 - T_U\right)}{t_0}
+\end{equation}
+
+```{r tab:Tabela8, echo=FALSE}
+library(binom)
+n <- 20
+t0 <- 1.0
+alpha1 <- 0.05
+alpha2 <- 0.01
+
+#DLA A
+wynik_A1 <- binom.confint(R_A, n, methods = "exact", conf.level = 1 - alpha1)
+p_L_A1 <- wynik_A1$lower
+p_U_A1 <- wynik_A1$upper
+
+wynik_A2 <- binom.confint(R_A, n, methods = "exact", conf.level = 1 - alpha2)
+p_L_A2 <- wynik_A2$lower
+p_U_A2 <- wynik_A2$upper
+
+T_L_A1 <- -log(1 - p_L_A1) / t0
+T_U_A1 <- -log(1 - p_U_A1) / t0
+
+T_L_A2 <- -log(1 - p_L_A2) / t0
+T_U_A2 <- -log(1 - p_U_A2) / t0
+
+przedzial_A_005 <- c(1 / T_U_A1, 1 / T_L_A1)
+przedzial_A_001 <- c(1 / T_U_A2, 1 / T_L_A2)
+
+
+#DLA B
+wynik_B1 <- binom.confint(R_B, n, methods = "exact", conf.level = 1 - alpha1)
+p_L_B1 <- wynik_B1$lower
+p_U_B1 <- wynik_B1$upper
+
+wynik_B2 <- binom.confint(R_B, n, methods = "exact", conf.level = 1 - alpha2)
+p_L_B2 <- wynik_B2$lower
+p_U_B2 <- wynik_B2$upper
+
+T_L_B1 <- -log(1 - p_L_B1) / t0
+T_U_B1 <- -log(1 - p_U_B1) / t0
+
+T_L_B2 <- -log(1 - p_L_B2) / t0
+T_U_B2 <- -log(1 - p_U_B2) / t0
+
+przedzial_B_005 <- c(1 / T_U_B1, 1 / T_L_B1)
+przedzial_B_001 <- c(1 / T_U_B2, 1 / T_L_B2)
+
+przedzialy<- c(
+  paste0("[", round(przedzial_A_005[1], 3), ", ", round(przedzial_A_005[2], 3), "]"),
+  paste0("[", round(przedzial_A_001[1], 3), ", ", round(przedzial_A_001[2], 3), "]"),
+  paste0("[", round(przedzial_B_005[1], 3), ", ", round(przedzial_B_005[2], 3), "]"),
+  paste0("[", round(przedzial_B_001[1], 3), ", ", round(przedzial_B_001[2], 3), "]")
+)
+
+tabela_wynikow <- data.frame(
+  Lek = c("A", "A", "B", "B"),
+  Alpha = c("0.05", "0.01", "0.05", "0.01"),
+  Przedzial_ufnosci = przedzialy)
+
+kable(tabela_wynikow, format = "latex", booktabs = TRUE, 
+      caption = "Przedziały ufności dla średniego czasu $\\mu$ \\label{tab:Tabela8}",
+      col.names = c("Lek", "$\\alpha$", "Przedział ufności"), escape = FALSE, align = 'lcc')%>%
+  kable_styling(latex_options = "hold_position")
+```
+
+Przedziały ufności uzyskane dla leku A i leku B są identyczne (Tabela \ref{tab:Tabela8}). Jest to konsekwencją sposobu działania funkcji `binom.confint`, która wykorzystuje te same dane wejściowe - liczbę pacjentów, liczbę remisji oraz czas obserwacji. Ponieważ wartości te są takie same w obu grupach, obliczone przedziały nie różnią się między sobą.
+
+\vspace{0.6cm}
+
+## Analiza parametrów czasu remisji przy założeniu cenzurowania typu II
+
+W poniższej analizie przyjęto, że obserwacje czasu do remisji choroby były prowadzone do momentu, w którym u dziesięciu pacjentów zaobserwowano remisję. Taki sposób zakończenia badania odpowiada cenzurowaniu typu II. Celem jest oszacowanie estymatorów w oparciu o ten nowy model.
+
+### Wyznaczenie ocen NW średniego czasu do remisji
+
+Poniżej wyznaczono estymatory największej wiarygodności dla średniego czasu do remisji oraz intensywności. Podstawą estymacji jest całkowity czas badania $T$. Oblicza się go na podstawie wzoru:
+
+\begin{equation}
+T = \sum_{i=1}^{m} t_{(i)} + (n-m)t_{(m)}
+\end{equation}
+
+```{r, echo=FALSE}
+m <- 10
+
+suma_t_A <- sum(czasy_remisji_A)
+t_m_A <- max(czasy_remisji_A) 
+T_A_typ2 <- suma_t_A + (n - m) * t_m_A
+mu_hat_A_typ2 <- T_A_typ2 / m
+
+suma_t_B <- sum(czasy_remisji_B)
+t_m_B <- max(czasy_remisji_B)
+T_B_typ2 <- suma_t_B + (n - m) * t_m_B
+mu_hat_B_typ2 <- T_B_typ2 / m
+
+tab <- c("$\\hat{\\mu}$ - NW średniego czasu")
+lek_A_wyniki <- c(mu_hat_A_typ2)
+lek_B_wyniki <- c(mu_hat_B_typ2)
+
+tabela_wynikow <- data.frame(Statystyka = tab, "Lek A" = lek_A_wyniki, "Lek B" = lek_B_wyniki, check.names = FALSE)
+
+kable(tabela_wynikow, format = "latex", booktabs = TRUE, caption = "Oszacowania NW dla cenzurowania typu II",
+      col.names = c("Statystyka", "Lek A", "Lek B"),digits = c(0, 4, 4), align = 'lcc', escape = FALSE)%>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+Analiza estymatorów NW dla cenzurowania typu II potwierdza poprzednie obserwacje. Lek B wykazuje wyraźnie krótszy średni czas do remisji w porównaniu do leku A, co sugeruje, że działa on szybciej.
+
+### Konstrukcja przedziałów ufności
+
+W celu wyznaczenia przedziałów ufności wykorzystano metodę opartą na rozkładzie Gamma. Dolną ($T_L$) i górną ($T_U$) granicę przedziału ufności na poziomie $1-\alpha$ obliczono za pomocą wzorów:
+
+\begin{equation}
+T_L = \frac{m \cdot q_{Ga}(\alpha/2)}{T}
+\end{equation}
+
+\begin{equation}
+T_U = \frac{m \cdot q_{Ga}(1-\alpha/2)}{T}
+\end{equation}
+
+gdzie $q_{Ga}(p)$ to kwantyl rzędu $p$ z rozkładu $Gamma(m, 1/m)$
+
+```{r, echo=FALSE}
+q_1_low <- qgamma(alpha1 / 2, shape = m, scale = 1/m)
+q_1_upp <- qgamma(1 - alpha1 / 2, shape = m, scale = 1/m)
+q_2_low <- qgamma(alpha2 / 2, shape = m, scale = 1/m)
+q_2_upp <- qgamma(1 - alpha2 / 2, shape = m, scale = 1/m)
+
+p_L_A1 <- m * q_1_low / T_A_typ2
+p_U_A1 <- m * q_1_upp / T_A_typ2
+p_L_A2 <- m * q_2_low / T_A_typ2
+p_U_A2 <- m * q_2_upp / T_A_typ2
+
+p_L_B1 <- m * q_1_low / T_B_typ2
+p_U_B1 <- m * q_1_upp / T_B_typ2
+p_L_B2 <- m * q_2_low / T_B_typ2
+p_U_B2 <- m * q_2_upp / T_B_typ2
+
+przedzial_A_005 <- c(1 / p_U_A1, 1 / p_L_A1)
+przedzial_A_001 <- c(1 / p_U_A2, 1 / p_L_A2)
+
+przedzial_B_005 <- c(1 / p_U_B1, 1 / p_L_B1)
+przedzial_B_001 <- c(1 / p_U_B2, 1 / p_L_B2)
+
+przedzialy <- c(
+  paste0("[", round(przedzial_A_005[1], 4), ", ", round(przedzial_A_005[2], 4), "]"),
+  paste0("[", round(przedzial_A_001[1], 4), ", ", round(przedzial_A_001[2], 4), "]"),
+  paste0("[", round(przedzial_B_005[1], 4), ", ", round(przedzial_B_005[2], 4), "]"),
+  paste0("[", round(przedzial_B_001[1], 4), ", ", round(przedzial_B_001[2], 4), "]")
+)
+
+tabela <- data.frame(Lek = c("A", "A", "B", "B"), Alpha = c("0.05", "0.01", "0.05", "0.01"),
+  Przedzial_ufnosci_Gamma = przedzialy)
+
+kable(tabela, format = "latex", booktabs = TRUE, caption = "Przedziały ufności dla $\\mu$",
+      col.names = c("Lek", "$\\alpha$", "Przedział ufności"), escape = FALSE, align = 'lcc')%>%
+  kable_styling(latex_options = "hold_position")
+```
+
+Przedziały ufności dla leku B są przesunięte w kierunku niższych wartości - krótszych czasów, co potwierdza wcześniejszy wniosek, że działa on szybciej niż lek A. Na podstawie tych wyników, nie można jednak jednoznacznie stwierdzić, który z nich jest lepszy, ponieważ przedziały na siebie nachodzą.
+
+\vspace{0.6cm}
+
+## Analiza porównawcza właściwości estymatorów
+
+Porównano dokładnoś dwóch różnych estymatorów nieznanej wartości parametru $\vartheta$. Jako miarę dokładności przyjęto obciążenie oraz błąd średniokwadratowy:
+
+* Obciążenie: $Bias(\hat{\vartheta},\vartheta) = E_{\vartheta}(\hat{\vartheta} - \vartheta)$, $Bias(\tilde{\vartheta},\vartheta) = E_{\vartheta}(\tilde{\vartheta} - \vartheta)$
+
+* Błąd Średniokwadratowy: $MSE(\hat{\vartheta}, \vartheta) = E_{\vartheta}(\hat{\vartheta} - \vartheta)^2$, $MSE(\tilde{\vartheta}, \vartheta) = E_{\vartheta}(\tilde{\vartheta} - \vartheta)^2$
+
+\vspace{0.4cm}
+
+Dla każdej kombinacji parametrów ($n$ i $t_0$) symulacja została powtórzona $M = 10000$ razy. W każdej $i$ - tej symulacji generowano próbę $n$ niezależnych zmiennych losowych $X_1, \dots, X_n$ z rozkładu wykładniczego $\mathcal{E}(\vartheta)$, obliczano statystyki dla cenzurowania w czasie $t_0$ oraz obliczano wartości obu estymatorów.
+
+Podczas przeprowadzania symulacji wykorzystano poniższe wzory:
+
+$R = \sum_{j=1}^{n} \mathbf{1}(X_j \le t_0)$
+
+$T_1 = \sum_{X_j \le t_0} X_j + (n-R)t_0$
+
+$\widehat{bias}(\hat{\vartheta}) = \frac{1}{M} \sum_{i=1}^{M} (\hat{\vartheta}^{(i)} - \vartheta)$
+
+$\widehat{MSE}(\hat{\vartheta}) = \frac{1}{M} \sum_{i=1}^{M} (\hat{\vartheta}^{(i)} - \vartheta)^2$
+
+\newpage
+
+Wyniki obliczeń przedstawiono w tabeli.
+
+```{r tab:Tabela11, echo=FALSE}
+M <- 10000
+theta_1 <- 1.0
+param_n <- c(10, 30)
+param_t0 <- c(0.5, 1, 2)
+
+results_list <- list()
+
+for (n in param_n){
+  for (t0 in param_t0){
+    vec_theta_hat <- numeric(M)
+    vec_theta_wave <- numeric(M)
+    
+    for (i in 1:M){
+      dane <- funkcja_1(n = n, lambda = theta_1, alpha = 1, t0 = t0)
+      R <- sum(dane$cenzura)
+      T1 <- sum(dane$czas)
+      
+      if (T1 == 0)
+        theta_hat <- 0
+      else
+        theta_hat <- R / T1
+      
+      p_hat <- R / n
+      
+      if (p_hat == 1.0)
+        p_hat <- 1.0 - 1e-10 
+      
+      theta_wave <- -log(1 - p_hat) / t0
+      vec_theta_hat[i] <- theta_hat
+      vec_theta_wave[i] <- theta_wave
+    }
+    
+    bias_hat <- mean(vec_theta_hat - theta_1)
+    mse_hat <- mean((vec_theta_hat - theta_1)^2)
+    
+    bias_wave <- mean(vec_theta_wave - theta_1)
+    mse_wave <- mean((vec_theta_wave - theta_1)^2)
+    
+    results_list[[paste0("n=", n, ", t0=", t0)]] <- data.frame(n = n, t0 = t0, Bias_Hat = bias_hat,
+      MSE_Hat = mse_hat, Bias_Wave = bias_wave, MSE_Wave = mse_wave)
+  }
+}
+results_df <- do.call(rbind, results_list)
+rownames(results_df) <- NULL
+
+col_names_latex <- c("$n$", "$t_0$", "bias($\\hat{\\vartheta}$)", 
+  "MSE($\\hat{\\vartheta}$)", "bias($\\tilde{\\vartheta}$)", "MSE($\\tilde{\\vartheta}$)"
+)
+
+kable(results_df, format = "latex", booktabs = TRUE, 
+      caption = "Porównanie obciążeń i błędów średniokwadratowych estymatorów $\\hat{\\vartheta}$ i $\\tilde{\\vartheta}$ \\label{tab:Tabela11}",
+      col.names = col_names_latex, digits = 5, align = 'cccccc', escape = FALSE)%>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+Na podstawie Tabeli \ref{tab:Tabela11}, estymator $\hat{\vartheta}$ jest wyraźnie lepszy, bardziej stabilny i dokładny w każdym przypadku. Zwiększenie liczby prób $n$ poprawia oba estymatory, jednak $\tilde{\vartheta}$ staje się niestabilny, gdy czas obserwacji $t_0$ rośnie, co widać po bardzo dużym błędzie MSE.
+
+\newpage
+
+# Weryfikacja hipotez statystycznych i analiza mocy testów
+
+## ZImplementacja testu ilorazu wiarogodności
+
+W tej części rozpatrywane są dane cenzurowane I-go typu, które stanowią realizacje zmiennych losowych o rozkładzie wykładniczym. Celem jest przeprowadzenie testu ilorazu wiarygodności w celu weryfikacji hipotez dotyczących parametru $\vartheta$. Rozważane są trzy warianty hipotez:
+
+- (a) \( H_0^{(1)}: \vartheta = \vartheta_0 \) przy hipotezie alternatywnej \( H_1^{(1)}: \vartheta \neq \vartheta_0 \),
+- (b) \( H_0^{(2)}: \vartheta \leq \vartheta_0 \) przy hipotezie alternatywnej \( H_1^{(2)}: \vartheta > \vartheta_0 \),
+- (c) \( H_0^{(3)}: \vartheta \geq \vartheta_0 \) przy hipotezie alternatywnej \( H_1^{(3)}: \vartheta < \vartheta_0 \).
+
+\vspace{0.3cm}
+
+Poniżej zdefiniowano funkcję obliczającą wartość poziomu krytycznego w teście ilorazu wiarygodności.
+
+```{r}
+test_ilorazu_wiar_wykladniczy <- function(r, s, n, t0, theta0, 
+                        rodzaj = c("two.sided", "less", "greater")){
+  theta_hat <- r / (s + (n - r) * t0)
+  logL0 <- r * log(theta0) - theta0 * (s + (n - r) * t0)
+  logLhat <- r * log(theta_hat) - theta_hat * (s + (n - r) * t0)
+  W <- -2 * (logL0 - logLhat)
+  
+  if (rodzaj == "two.sided")
+    pval <- 1 - pchisq(W, df = 1)
+  
+  else if (rodzaj == "greater"){
+      if (theta_hat > theta0)
+        pval <- 0.5 * (1 - pchisq(W, df = 1))
+      else
+        pval <- 1
+  }
+  
+  else if (rodzaj == "less"){
+    if (theta_hat < theta0)
+      pval <- 0.5 * (1 - pchisq(W, df = 1))
+    else
+      pval <- 1
+  }
+  return(data.frame(test_type = rodzaj, r = r, s = s, n = n, t0 = t0, 
+                    theta0 = theta0, theta_hat = round(theta_hat, 5), 
+                    W = round(W, 5), p_value = round(pval, 5)))
+}
+```
+
+\newpage
+
+## Symulacyjna analiza mocy oraz rozmiaru testu ilorazu wiarogodności
+
+Przeprowadzono symulacje, których celem było oszacowanie mocy oraz rozmiaru testu ilorazu wiarogodności dla danych cenzurowanych I-go typu. Analizowano weryfikację dwustronnej hipotezy zerowej: $$H_0^{(1)}: \vartheta = \vartheta_0 \quad \text{przy hipotezie alternatywnej} \quad H_1^{(1)}: \vartheta \neq \vartheta_0$$
+
+Dane do każdej symulacji były generowane z rozkładu wykładniczego o parametrze intensywności $\vartheta$ równym aktualnie analizowanej wartości parametru.
+
+Aby zbadać zachowanie testu, wybrano następujący zestaw parametrów symulacji:
+
+- Liczba powtórzeń: $M = 10000$ 1000
+
+- Poziom istotności: $\alpha = 0.05$
+
+- Wartość w hipotezie zerowej: $\vartheta_0$ = 1.2
+
+- Czas cenzurowania: $t_0 = 1$
+
+- Analizowane rozmiary próbek: $n \in \{20, 50\}$
+
+- Analizowane wartości: $\vartheta \in \{0.5, 0.8, 1.0, 1.1, 1.2, 1.3, 1.4, 1.7, 2.0\}$ 
+
+```{r, echo=FALSE}
+M <- 1000
+n_values <- c(20, 50)
+theta0 <- 1.2
+t0 <- 1
+alpha_poziom <- 0.05
+alpha <- 1
+theta_A <- c(0.5, 0.8, 1, 1.1, 1.2, 1.3, 1.4, 1.6, 1.7, 2)
+
+set.seed(123456)
+
+wyniki_symulacji <- data.frame(
+  n = integer(),
+  theta_true = double(),
+  moc_rozmiar = double()
+)
+
+for (n_current in n_values){
+  for (theta_true in theta_A){
+    p_values_vector <- replicate(M,{
+      dane <- funkcja_1(n = n_current, lambda = theta_true, alpha = alpha, t0 = t0)
+      r <- sum(dane$cenzura == 1)
+      s <- sum(dane$czas[dane$cenzura == 1])
+      wynik_testu <- test_ilorazu_wiar_wykladniczy(r, s, n_current, t0, theta0, rodzaj = "two.sided")
+      return(wynik_testu$p_value)
+    })
+    
+    odrzucenia <- sum(p_values_vector < alpha_poziom) / M
+    
+    wyniki_symulacji <- rbind(wyniki_symulacji,
+      data.frame(n = n_current, theta_true = theta_true, moc_rozmiar = odrzucenia))
+  }
+}
+```
+
+```{r, echo=FALSE}
+library(tidyr)
+
+wyniki_do_tabeli <- wyniki_symulacji%>%
+  mutate(Typ = ifelse(theta_true == theta0, "rozmiar testu", "moc testu"))%>%
+  mutate(moc_rozmiar = round(moc_rozmiar, 4))%>%
+  pivot_wider(id_cols = c(theta_true, Typ), names_from = n,  values_from = moc_rozmiar, names_prefix = "n = ")%>%
+  select(theta_true, Typ, 'n = 20', 'n = 50') 
+
+col_names_latex <- c("$\\vartheta$", "Rodzaj pomiaru", "Wynik (n = 20)", "Wynik (n = 50)")
+
+kable(wyniki_do_tabeli, format = "latex", booktabs = TRUE, caption = "Moc i rozmiar testu (M = 1000, $t_{0}$ = 1.0, $\\vartheta_{0}$ = 1.2)", col.names = col_names_latex, align = 'cccc', escape = FALSE)%>%
+  kable_styling(latex_options = c("hold_position", "striped")) %>%
+  row_spec(which(wyniki_do_tabeli$Typ == "rozmiar testu"), bold = TRUE)
+```
+
+Zwiększenie wielkości próby z $n = 20$ do $n = 50$ znacząco zwiększa moc testu. Ponadto moc zwiększa się z odległością prawdziwej wartości $\vartheta$ od testowanej hipotezy.  Rozmiar testu (wynik dla $\vartheta = 1.2$) dla $n = 20$ jest bardzo bliski zakładanemu poziomowi istotności, a dla $n = 50$ jest jemu równy. Świadczy to o poprawnym działaniu testu.
+
+\newpage
+
+## Weryfikacja hipotezy o średnim czasie remisji w grupach pacjentów A i B
+
+Korzystając z funkcji zaimplementowanej wyżej, przeprowadzono analizę danych dotyczących badania klinicznego czasu remisji choroby w dwóch grupach pacjentów. Dane te miały postać cenzurowaną I-go typu, a do modelowania czasu remisji przyjęto, że są one ralizacjami zmiennych z rozkładu wykładniczego.
+
+Analiza miała na celu ocenę, czy średni czas do remisji choroby w obu badanych grupach jest równy $1$. W tym celu przeprowadzono dwustronny test ilorazu wiarogodności w celu weryfikacji hipotezy $H_0: \vartheta = 1$ przeciwko alternatywie $H_1: \vartheta \neq 1$. 
+
+```{r, echo=FALSE}
+theta0_do_testu <- 1.0
+rodzaj_testu <- "two.sided"
+n <- 20
+r_A <- sum(dane_A$cenzura == 1)
+s_A <- sum(dane_A$czas[dane_A$cenzura == 1])
+t0_A <- unique(dane_A$czas[dane_A$cenzura == 0])
+
+r_B <- sum(dane_B$cenzura == 1)
+s_B <- sum(dane_B$czas[dane_B$cenzura == 1])
+t0_B <- unique(dane_B$czas[dane_B$cenzura == 0])
+
+wynik_A <- test_ilorazu_wiar_wykladniczy(r_A, s_A, n, t0_A, theta0_do_testu, rodzaj_testu)
+wynik_B <- test_ilorazu_wiar_wykladniczy(r_B, s_B, n, t0_B, theta0_do_testu, rodzaj_testu)
+
+wyniki_laczne <- rbind(wynik_A, wynik_B)
+wyniki_laczne$Grupa <- c("A", "B")
+
+alpha_poziom <- 0.05
+wyniki_tabela <- wyniki_laczne %>%
+  mutate(Decyzja = ifelse(p_value < alpha_poziom, "Odrzucamy $H_{0}$", "Brak podstaw do odrzucenia $H_{0}$"))%>%
+  
+  select(Grupa, theta_hat, W, p_value, Decyzja)
+
+col_names_latex <- c("Grupa", "$\\hat{\\vartheta}$", "$W$", "$p$-value", 
+                     "Decyzja (dla $\\alpha=0.05$)")
+
+kable(wyniki_tabela, format = "latex", booktabs = TRUE, caption = "Wyniki testu dla hipotezy o średnim czasie remisji",
+      col.names = col_names_latex,  align = 'cccccc', digits = 5, escape = FALSE)%>%
+  kable_styling(latex_options = c("hold_position", "striped"))
+```
+
+Dla obu grup, A i B, uzyskane wartości p-value są wyższe od poziomu istotności $0.05$. Oznacza to, że w żadnej z grup nie ma statystycznych podstaw do odrzucenia hipotezy zerowej ($H_0$). 

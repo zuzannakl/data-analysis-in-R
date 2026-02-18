@@ -1,0 +1,807 @@
+---
+title: "Diagnostyka białego szumu i metody dekompozycji"
+author: "Zuzanna Klaman"
+subtitle: "Analiza szeregów czasowych"
+date: "`r Sys.Date()`"
+header-includes:
+   - \usepackage{longtable}
+   - \usepackage{booktabs}
+   - \usepackage{graphicx}
+   - \usepackage{float}
+   - \usepackage{polyglossia}
+   - \setdefaultlanguage{polish}
+   - \renewcommand{\contentsname}{Spis treści}
+   - \usepackage{placeins}
+output:
+  pdf_document:
+    toc: true
+    fig_caption: true
+    fig_width: 9
+    fig_height: 8
+    number_sections: true
+    latex_engine: xelatex
+    keep_tex: true
+    dev: "cairo_pdf"
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE, cache=TRUE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+knitr::opts_chunk$set(dev = "CairoPDF")
+options(encoding = "UTF-8")
+```
+
+```{r, echo =FALSE, warning=FALSE, message=FALSE}
+library(arules)
+library(dplyr)
+library(knitr)
+library(ipred)
+library(forecast)
+library(ggplot2)
+```
+
+\newpage
+
+# Testowanie białoszumowości
+
+## Porównanie testu graficznego oraz formalnych testów statystycznych
+
+### Krótki opis zagadnienia:
+
+Analizujemy sztucznie wygenerowane szeregi czasowe, takie jak:
+
+* Szum IID,
+* Model ruchomej średniej rzędu 1,
+* Błądzenie losowe,
+* Szum IID z trendem liniowym, 
+* Biały szum o rozkładzie wykładniczym.
+ 
+Celem jest zilustrowanie działania testu graficznego opartego na funkcji autokorelacji oraz wybranych formalnych testów statystycznych służących do weryfikacji hipotezy, że obserwowany szereg czasowy jest procesem białego szumu. Test przeprowadzamy na asymptotycznym poziomie istotności równym $\alpha$.
+
+### Opis eksperymentów/analiz
+
+Przebieg analizy można podzielić na dwa etapy:
+
+* Przeprowadzenie testu graficznego opartego na funkcji autokorelacji, porównującego autokorelacje próbkowe z asymptotycznymi granicami istotności wynikającymi z własności białego szumu.
+
+* Przeprowadzenie formalnych testów statystycznych przy wykorzystaniu statystyk testowych Boxa-Pierce'a czy Ljungi-Boxa.
+
+\newpage
+
+### Wyniki
+
+**Test graficzny oparty na funkcji autokorelacji (ACF)**
+
+Reguła identyfikacji modelu nazywana również graficznym testem białoszumowości mówi, że:
+
+Szereg możemy uznać za realizację białego szumu, jeżeli:
+
+* Co najmniej $95%$ autokorelacji próbkowych znajduje się w przedziale $\pm \frac{1,96}{\sqrt{n}}$,
+
+* Nie powinno być autokorelacji "istotnie" wychodzących poza przedziały ufności $\pm \frac{1,96}{\sqrt{n}}$.
+
+Do przeprowadzenia testu graficznego na sztucznie wygenerowanych szeregach czasowych, wykorzystamy funkcję `ggtsdisplay`, która wyświetla wykres realizacji szeregu, wykres `ACF` z przedziałami ufności oraz wykres rozrzutu między dwoma kolejnymi obserwacjami szeregu.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+set.seed(123)
+n <- 100
+alpha <- 0.05 
+szum_iid <- ts(rnorm(n))
+ggtsdisplay(szum_iid, plot.type = "scatter" ,main= "Szum IID")
+```
+
+Na podstawie wykresu widać, że Szum IID jest białym szumem, wszystkie autokorelacje mieszczą się w pasmach ufności, a ich wartości są bliskie zeru.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+theta = 0.5
+MA1 <- arima.sim(n=n, model = list(ma=theta))
+ggtsdisplay(MA1, plot.type = "scatter" ,main= "Model ruchomej średniej rzędu 1")
+```
+
+Na podstawie wykresu widać, że model ruchomej średniej nie jest białym szumem, co prawda warunek dotyczący częstości wpadania autokorelacji można uznać za spełniony, jednak autokorelacja dla opóźnienia czasowego równego $1$ znacznie przekracza pasmo ufności, wskazując na zależności czasowe.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+bladzenie_losowe <- ts(cumsum(rnorm(n)))
+ggtsdisplay(bladzenie_losowe, plot.type = "scatter" ,main= "Błądzenie losowe")
+```
+
+Na podstawie wykresu widać, że błądzenie losowe nie jest białym szumem, większość autokorelacji przekracza pasmo ufności i jest malejąca, co świadczy o silnej zależności czasowej.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+delta <- 0.2
+WN <- rnorm(n)
+trend.liniowy <- delta*time(WN)
+ggtsdisplay(trend.liniowy, plot.type = "scatter" ,main= "Szum IID z trendem liniowym")
+```
+
+Na podstawie wykresu widać, że Szum IID z trendem liniowym wyraźnie pokazuje nielosową strukturę a wszystkie widoczne autokorelacje przekraczają pasmo ufności. Zatem można wywnioskować, że nie jest on białym szumem. 
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+szum_exp <- rexp(n, rate = 1)
+ggtsdisplay(szum_exp, plot.type = "scatter" ,main= "Biały szum o rozkładzie wykładniczym")
+```
+
+Na wykresie nie widać żadnej regularnej struktury, a wszystkie autokorelacje mieszczą się w pasmach ufności. Z tego łatwo można wywnioskować, że analizowany szereg to realizacja białego szumu. 
+
+\newpage
+
+**Formalne testy statystyczne**
+
+Podstawowymi testami opartymi na funkcji autokorelacji są:
+
+* Test Boxa-Pierce'a,
+* Test Ljungi-Boxa.
+
+Idea tych testów jest taka, że zamiast sprawdzać dla każdego $h$ czy autokorelacja próbkowa znajduje się między przedziałami $\pm \frac{1,96}{\sqrt{n}}$, analizujemy pojedynczą wartość, tzn. statystykę testową opartą na `ACF` dla kilku/kilkudziesięciu początkowych opóźnień.
+
+W przypadku testu Boxa-Pierce'a postać statystyki testowej wygląda następująco: $Q_{BP} = n \sum_{j=1}^{h} \hat{\rho}^2(j)$,  gdzie $h$ oznacza pewne maksymalne opóźnienie, a  $\hat{\rho}(j)$ to próbkowa autokorelacja dla opóźnienia $j$. 
+
+W przypadku testu Ljungi-Boxa postać statystyki testowej wygląda następująco: $Q_{LB} = n(n+2) \sum_{j=1}^{h} \frac{\hat{\rho}^2(j)}{n-j}$.
+
+Duże wartości $Q_{BP}$ i $Q_{LB}$ będą oznaczały, że `ACF` są zbyt duże, aby uznać dane za realizacje białego szumu. Aby stwierdzić czy ta wartości są zbyt duże, wykorzystujemy wskaźnik *p-value* dla ustalonego poziomu istotności $\alpha=0.05$. 
+Do obliczenia tych statystyk zostanie wykorzystana funkcja `Box.test` z pakietu `stats`.
+
+\vspace{0.5cm}
+
+**Testy Boxa-Pierce'a i Ljungi-Boxa dla szumu IID**
+
+```{r, warning = FALSE, message=FALSE}
+h.max <- floor(n/4)
+BP_szum_iid <- Box.test(szum_iid, type="Box-Pierce", lag=h.max)
+LB_szum_iid <- Box.test(szum_iid, type="Ljung-Box",  lag=h.max)
+```
+
+Dla testu Boxa-Pierce'a wartość *p-value* jest równa `r round(BP_szum_iid$p.value, 4)`. Dla testu Ljungi-Boxa wartość *p-value* jest równa `r round(LB_szum_iid$p.value, 4)`, zatem w obydwu przypadkach wartość *p-value* znacznie przekracza poziom istotności $\alpha=0.05$, czyli mamy do czynienia z szeregiem typu biały szum.
+
+\vspace{0.5cm}
+
+**Testy Boxa-Pierce'a i Ljungi-Boxa dla modelu ruchomej średniej**
+
+```{r, warning = FALSE, message=FALSE}
+BP_ma1 <- Box.test(MA1, type="Box-Pierce", lag=h.max)
+LB_ma1 <- Box.test(MA1, type="Ljung-Box",  lag=h.max)
+```
+
+Dla testu Boxa-Pierce'a wartość  *p-value* jest równa `r round(BP_ma1$p.value, 4)`. Dla testu Ljungi-Boxa wartość *p-value* jest równa `r round(LB_ma1$p.value, 4)`, zatem w obu przypadkach wartość *p-value* znacznie przekracza poziom istotności $\alpha=0.05$, czyli według testów mamy do czynienia z szeregiem typu biały szum, co nie jest prawdą.
+
+\newpage
+
+**Testy Boxa-Pierce'a i Ljungi-Boxa dla błądzenia losowego**
+
+```{r, warning=FALSE, message=FALSE, fig.height=4}
+BP_rw <- Box.test(bladzenie_losowe, type="Box-Pierce", lag=h.max)
+LB_rw <- Box.test(bladzenie_losowe, type="Ljung-Box",  lag=h.max)
+```
+
+Dla testu Boxa-Pierce'a wartość *p-value* jest bliska `r round(BP_rw$p.value, 4)`. Dla testu Ljungi-Boxa wartość *p-value* również jest bliska `r round(LB_rw$p.value, 4)`, zatem w obydwu przypadkach wartość *p-value* jest dużo mniejsza od wartości poziomu istotności $\alpha=0.05$, czyli według testów ten szereg nie jest białym szumem.
+
+\vspace{0.5cm}
+
+**Testy Boxa-Pierce'a i Ljungi-Boxa dla szumu IID z trendem liniowym**
+
+```{r, warning=FALSE, message=FALSE, fig.height=4}
+BP_tl <- Box.test(trend.liniowy, type="Box-Pierce", lag=h.max)
+LB_tl <- Box.test(trend.liniowy, type="Ljung-Box",  lag=h.max)
+```
+
+Dla testu Boxa-Pierce'a  wartość *p-value* jest bliska `r round(BP_tl$p.value, 4)`. Dla testu Ljungi-Boxa wartość *p-value* również jest bliska `r round(LB_tl$p.value, 4)`, zatem w obydwu przypadkach wartość *p-value* jest dużo mniejsza od wartości poziomu istotności $\alpha=0.05$, czyli według testów ten szereg nie jest białym szumem.
+
+\vspace{0.5cm}
+
+**Testy Boxa-Pierce'a i Ljungi-Boxa dla białego szumu o rozkładzie wykładniczym**
+
+```{r, warning=FALSE, message=FALSE, fig.height=4}
+BP_exp <- Box.test(szum_exp, type="Box-Pierce", lag=h.max)
+LB_exp <- Box.test(szum_exp, type="Ljung-Box",  lag=h.max)
+```
+
+Dla testu Boxa-Pierce'a wartość *p-value* jest równa `r round(BP_exp$p.value, 4)`. Dla testu Ljungi-Boxa  wartość *p-value* jest równa `r round(LB_exp$p.value, 4)`, zatem w obydwu przypadkach wartość *p-value* znacznie przekracza poziom istotności $\alpha=0.05$, czyli mamy do czynienia z szeregiem typu biały szum.
+
+\vspace{0.5cm}
+
+### Wnioski
+
+* Dla powyższych szeregów testy graficzne w każdej sytuacji poprawnie weryfikowały hipotezę czy analizowany szereg jest szeregiem typu biały szum, natomiast formalne testy statytystyczne mylnie zakwalifikowały model o ruchomej średniej do szeregów typu biały szum.
+
+* Błąd w testach statystycznych jest efektem niskiej mocy testów przy dużej liczbie powtórzeń, w procesie `MA(1)` tylko pierwsza autokorelacja jest niezerowa, przez co jej wpływ zanika w sumie $25$ opóźnień czasowych.
+
+\newpage
+
+## Symulacyjne porównanie białoszumowości
+
+### Krótki opis zagadnienia:
+
+Celem tej części jest symulacyjne porównanie dwóch podejść do testowania białoszumowości: testu graficznego opartego na funkcji autokorelacji oraz formalnych testów Boxa-Pierce'a i Ljungi-Boxa. Chcemy zweryfikować, jak często poszczególne testy poprawnie weryfikują hipotezę, że obserwowany szereg czasowy jest procesem białego szumu w różnych sytuacjach:
+
+* dla różnych rozkładów,
+* różnej długości szeregów, 
+* różnego wyboru maksymalnego opóźnienia,
+* dla procesów, które nie są białym szumem.
+
+### Opis eksperymentów/analiz
+
+W eksperymentach symulacyjnych wygenerujemy wielokrotne realizacje o liczbie $N$ powtórzeń, gdzie $N \in \{100, 500, 1000\}$ szeregów czasowych długości $n \in \{25, 50, 100\}$. Rozważymy trzy różne rozkłady dla szumu IID: 
+
+* rozkład normalny $\mathcal{N}(0, 1)$,
+* rozkład wykładniczy $\mathcal{E}(1)$, 
+* rozkład Bernoulliego $\mathcal{B}(0, 1)$.
+
+Oprócz tego przeanalizujemy szeregi, które nie są białym szumem: 
+
+* Model ruchomej średniej rzędu $1$,
+* Błądzenie losowe,
+* Szum IID z trendem liniowym.
+
+Dla każdej kombinacji modelu, długości szeregu, liczby powtórzeń oraz maksymalnego opóźnienia obliczymy częstość odrzucenia hipotezy o białoszumowości przez test graficzny oraz testy Boxa-Pierce'a i Ljungi-Boxa.
+
+### Wyniki
+
+Dla każdego scenariusza wygenerujemy wiele realizacji danych, a następnie dla każdej realizacji ocenimy, czy dany test odrzuca hipotezę zerową o białoszumowości. Do weryfikacji hipotezy o białoszumowości zaimplementujemy funkcje:
+
+* `test_graficzny` zwracającą wartość 0 lub 1 w zależności, czy test przyjął hipotezę o białoszumowości (0 - nie przyjął, 1 - przyjął)
+
+* `testy_statystyczne` zwracająca wartość 0 lub 1 w zależności, czy testy Boxa-Pierce'a i Ljungi-Boxa przyjęły hipotezę o białoszumowości (0 - nie przyjęły, 1 - przyjęły)
+
+Dla każdej konfiguracji obliczymy częstość odrzucenia, które pozwolą nam wywnioskować, które parametry w którym modelu najbardziej wpływają na skuteczność poszczególnych testów.
+
+```{r, echo=FALSE}
+test_graficzny <- function(x, h.max = NULL, alpha = 0.05){
+  
+  if (is.matrix(x)){
+    return(apply(x, 2, test_graficzny, h.max = h.max, alpha = alpha))
+  }
+  
+  x <- as.numeric(x)
+  n <- length(x)
+  
+  if (is.null(h.max)) h.max <- floor(n / 4)
+  ac <- acf(x, plot = FALSE, lag.max = h.max)$acf[-1]
+  przedzial_95 <- 1.96 / sqrt(n)
+  przekroczenia_3sigma <- 3 / sqrt(n)
+  warunek1 <- mean(abs(ac) <= przedzial_95) >= 0.95
+  warunek2 <- all(abs(ac) <= przekroczenia_3sigma)
+  return(as.integer(warunek1 & warunek2))
+}
+
+testy_statystyczne <- function(x, h.max = NULL, alpha = 0.05,
+                           type = c("Box-Pierce", "Ljung-Box")){
+  type <- match.arg(type)
+  
+  if (is.matrix(x)){
+    res <- apply(x, 2, testy_statystyczne, h.max = h.max, alpha = alpha, type = type)
+    return(unlist(res))
+  }
+  
+  x <- as.numeric(x)
+  n <- length(x)
+  if (is.null(h.max)){
+    h.max <- floor(n / 4)
+  }
+  
+  testy <- Box.test(x, lag = h.max, type = type)
+  as.integer(testy$p.value >= alpha)
+}
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+szereg <- function(model, n){
+  if (model == "BS_norm"){
+    return(rnorm(n))
+  }
+  if (model == "BS_exp"){
+    return(rexp(n, rate = 1))
+  }
+  if (model == "BS_ber"){
+    return(sample(c(0, 1), size = n, replace = TRUE))
+  }
+  if (model == "MA1"){
+    return(as.numeric(arima.sim(model = list(ma = 0.5), n = n)))
+  }
+  if (model == "RW"){
+    return(cumsum(rnorm(n)))
+  }
+  if (model == "SZ_trend_lin"){
+  WN <- rnorm(n)
+  delta <- 0.2
+  trend <- delta * 1:n
+  return(WN + trend)
+  }
+}
+
+symulacja <- function(model, n, liczba_powtorzen, h.max, alpha = 0.05){
+  
+  realizacje <- replicate(liczba_powtorzen, szereg(model, n))
+  
+  wynik_TG  <- test_graficzny(realizacje, h.max = h.max, alpha = alpha)
+  wynik_BP  <- testy_statystyczne(realizacje, h.max = h.max, alpha = alpha, type = "Box-Pierce")
+  wynik_LB  <- testy_statystyczne(realizacje, h.max = h.max, alpha = alpha, type = "Ljung-Box")
+  
+  data.frame(model = model, n = n, liczba_powtorzen = liczba_powtorzen, h.max = h.max,
+    odrz_T_Graf = mean(wynik_TG == 0), odrz_T_BP = mean(wynik_BP == 0), odrz_T_LB   = mean(wynik_LB == 0))
+}
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE,  results='hide'}
+modele <- c("BS_norm", "BS_exp", "BS_ber", "MA1", "RW", "SZ_trend_lin")
+dlugosci <- c(25, 50, 100)
+powtorzenia <- c(100, 500, 1000)
+
+h_reguly <- list(
+  male   = function(n) floor(n^(1/3)),
+  srednie = function(n) floor(n/4),
+  duze   = function(n) floor(n/2)
+)
+
+wyniki_sym <- data.frame()
+
+for (m in modele){
+  for (n in dlugosci){
+    for (N in powtorzenia){
+      for (h_nazwa in names(h_reguly)){
+        h.max <- h_reguly[[h_nazwa]](n)
+        wyn <- symulacja(
+          model = m,
+          n = n,
+          liczba_powtorzen = N,
+          h.max = h.max,
+          alpha = 0.05
+        )
+        wyniki_sym <- rbind(wyniki_sym, wyn)
+      }
+    }
+  }
+}
+
+```
+
+\newpage
+
+**Wpływ różnych rozkładów na częstość odrzucenia hipotezy o białoszumowości**
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+library(kableExtra)
+
+wyniki_rozklady <- wyniki_sym %>%
+  filter(liczba_powtorzen == 1000, n == 50, h.max == 12, model %in% c("BS_norm", "BS_exp", "BS_ber")) %>%
+  arrange(model)
+
+wyniki_rozklady %>%
+  kable(format = "latex", digits = 3, booktabs = TRUE,
+    caption = "Wpływ różnych rozkładów na częstość odrzucenia hipotezy o białoszumowości (N = 1000, n = 50, h.max = 12).",
+    align = "c") %>%
+  kable_styling(latex_options = "hold_position")
+
+```
+
+Analiza wykazała niewielki wpływ rodzaju rozkładu na działanie testów. Test graficzny konsekwentnie wykazywał wyższy, lecz stabilny poziom odrzuceń w porównaniu do testów formalnych. Testy Boxa-Pierce’a i Ljungi-Boxa utrzymywały niską częstość odrzuceń niezależnie od rozkładu, potwierdzając swoją odporność na jego kształt przy skończonej wariancji.
+
+\vspace{0.5cm}
+
+**Wpływ długości szeregu** $n$ **na częstość odrzucenia hipotezy o białoszumowości**
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+library(kableExtra)
+
+wyniki_n <- wyniki_sym %>%
+  filter(model == "BS_norm", liczba_powtorzen == 1000, h.max == floor(n/2)) %>%
+  arrange(n)
+
+wyniki_n %>%
+  kable(format = "latex", digits = 3,booktabs = TRUE,
+    caption = "Wpływ długości szeregu n na częstość odrzucenia hipotezy o białoszumowości dla modelu BS\\_norm (N = 1000, h.max = h\\_graniczne).",
+    align = "c")%>%
+  kable_styling(latex_options = "hold_position")
+
+```
+
+Wzrost długości szeregu nie przełożył się wprost na wzrost mocy testu graficznego. Test Boxa-Pierce’a zanotował bardzo niską czułość wobec wszystkich analizowanych długości. 
+Test Ljungi-Boxa wykazał względnie stałą i nieco wyższą moc, sugerując mniejszą wrażliwość na krótkie szeregi.
+
+\newpage
+
+**Wpływ maksymalnego opóźnienia** $h_{max}$ **na częstość odrzucenia hipotezy o białoszumowości**
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+library(kableExtra)
+
+wyniki_h.max <- wyniki_sym %>%
+  filter(model == "BS_exp", liczba_powtorzen == 1000, n == 100)%>%
+  arrange(h.max)
+
+wyniki_h.max %>%
+  kable(format = "latex", digits = 3, booktabs = TRUE,
+    caption = "Wpływ maksymalnego opóźnienia na częstość odrzucenia hipotezy o białoszumowości dla modelu BS\\_exp (N = 1000, n = 100).",
+    align = "c")%>%
+  kable_styling(latex_options = "hold_position")
+```
+
+Wyniki demonstrują kluczowy wpływ parametru $h_{max}$ na moc wszystkich badanych testów. W miarę jego zwiększania, czułość testów (poza testem Ljungi-Boxa)  spada, przy czym najbardziej radykalny spadek obserwuje się dla testu Boxa-Pierce'a. Co istotne, nawet test graficzny, uważany za odporniejszy, traci moc przy zbyt dużych opóźnieniach.
+
+\vspace{0.5cm}
+
+**Wpływ różnych innych procesów nie będących białym szumem na częstość odrzucenia hipotezy o białoszumowości**
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+library(kableExtra)
+
+wyniki_rozklady <- wyniki_sym %>%
+  filter(liczba_powtorzen == 1000, n == 100, h.max == 25, model %in% c("MA1", "RW", "SZ_trend_lin")) %>%
+  arrange(model)
+
+wyniki_rozklady %>%
+  kable(format = "latex", digits = 3, booktabs = TRUE,
+    caption = "Wpływ różnych innych procesów nie będących białym szumem na częstość odrzucenia hipotezy o białoszumowości (N = 1000, n = 100, h.max = 25).",
+    align = "c")%>%
+  kable_styling(latex_options = "hold_position")
+
+```
+
+Jak można zauważyć wszystkie rozważane procesy, które nie są białym szumem, są prawidłowo rozpoznawane przez testy, częstości odrzucenia hipotezy o białoszumowości są wysokie. Jedynym wyjątkiem jest proces MA(1), dla którego testy formalne rzadziej odrzucają hipotezę o białoszumowości, co jest spowodowane tym, że `MA(1)` ma tylko jedną istotną autokorelację, a pozostałe są zerowe.
+
+\newpage
+
+**Wpływ ilości powtórzeń  na częstość odrzucenia hipotezy o białoszumowości**
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+library(kableExtra)
+
+wyniki_rozklady <- wyniki_sym %>%
+  filter(n == 50, h.max == 25, model == "BS_ber")%>%
+  arrange(liczba_powtorzen)
+
+wyniki_rozklady %>%
+  kable(format = "latex", digits = 3, booktabs = TRUE,
+    caption = "Wpływ ilości powtórzeń  na częstość odrzucenia hipotezy o białoszumowości dla modelu BS\\_ber (n = 50, h.max = 25).",
+    align = "c")%>%
+  kable_styling(latex_options = "hold_position")
+
+```
+
+Zmiana liczby powtórzeń $N$ wpływa jedynie na niewielkie wahania estymowanych częstości hipotezy o białoszumowości. Zarówno test graficzny, jak i formalne, osiągnęły stateczny poziom mocy już dla $N=500$. Potwierdza to rzetelność procedury symulacyjnej i wiarygodność uzyskanych estymatorów mocy testów.
+
+\vspace{0.5cm}
+
+### Podsumowanie:
+
+Test graficzny okazał się najbardziej wrażliwy na sam fakt występowania jakiejkolwiek autokorelacji, wykrywając ją tam, gdzie testy formalne zawodziły. Z kolei testy formalne były wrażliwe na dobór parametru maksymalnego opóźnienia $h_{max}$. Testy Boxa-Pierce’a i Ljunga-Boxa charakteryzowały się znacznie większą stabilnością, utrzymywały poziom odrzucenia bliski poziomowi istotności, niezależnie od parametrów symulacji. Wyniki te wskazują, że test graficzny jest użytecznym narzędziem wstępnej diagnostyki, jednak przy analizie danych o małej długości lub przy dużej liczbie opóźnień może być zawodny. Testy formalne są bardziej wiarygodne i powinny stanowić podstawową metodę weryfikacji białoszumowości.
+
+\newpage
+
+# Dekompozycja szeregów czasowych - eliminacja trendu i sezonowości
+
+## Krótki opis zagadnienia:
+
+Analizować będziemy szereg czasowy `austourists` z pakietu `fpp2`. Są to dane pokazujące liczbę noclegów (w milionach) międzynarodowych turystów w Australii w latach $1999 - 2015$.
+Głównym celem jest dekompozycja tych danych oraz eliminacja trendu i sezonowości. Przeanalizujemy także postawowe własności szeregu oraz sprawdzimy w jakim stopniu wybór parametrów danej metody dekompozycji wpływa na otrzymane wyniki.
+
+W celu wczytania danych, najpierw załadujemy pakiet `fpp2`. Udostępnia on szereg `austourists`, który będziemy analizować.
+
+```{r,  message=FALSE, warning=FALSE}
+library(fpp2)
+```
+
+## Opis eksperymentów/analiz
+
+Przebieg analizy można podzielić na cztery główne etapy:
+
+* Wstępna analiza graficzna - na początku konieczna jest ocena i analiza własności danych, w tym celu zastosujemy wykresy zwykłe i sezonowe.
+
+* Zastosowanie i porównanie metod dekompozycji - następnie przetestujemy i porównamy trzy postawowe metody dekompozycji: dekompozycje na podstawie ruchomej średniej, na podstawie modelu regresji oraz dekompozycje STL. W ramach tego etapu zbadamy również, jak zmiana kluczowych parametrów wpływa na otrzymane wyniki.
+
+* Testowanie transformacji Boxa-Coxa - sprawdzimy, czy transformacja prowadzi do stabilizacji wariancji, a tym samym do poprawy jakości dopasowania modeli dekompozycji.
+
+* Porównanie reszt i analiza stacjonarności - to kluczowy etap analizy. Porównamy szeregi reszt uzyskane ze wszystkich powyższych metod. Celem jest sprawdzenie, która technika najskuteczniej wyczyści dane z trendu i sezonowości.
+
+\newpage
+
+## Wyniki
+
+### Analiza graficzna podstawowych własności szeregu
+
+**Zbiórcza diagnostyka szeregu**
+
+Analizę rozpoczynamy od wizualizacji szeregu w czasie. Pozwala to na wstępną identyfikację jego cech: obecność trendu, sezonowości oraz ewentualnych obserwacji odstających. Wykorzystamy do tego funckję `ggtsdisplay`, która dodatkowo połączy zwykły wykres szeregu z wykresami funkcji autokorelacji (`ACF`) i częściowej autokorelacji (`PACF`).
+
+```{r}
+ggtsdisplay(austourists)
+```
+\newpage
+
+Na podstawie powyższych wykresów, możemy zaobserwować następujące cechy:
+
+* Trend wzrostowy: Ogólna liczba noclegów turystycznych systematycznie rośnie w analizowanym okresie. Potwierdza to wykres `ACF`, na którym autokorelacje opadają bardzo powoli, jest to objaw niestacjonarności.
+
+* Silna sezonowość: Obserwujemy regularne, powtarzające się co roku wahania. Ponadto wysokość wahań sezonowych rośnie wraz z poziomem trendu, więc mamy do czynienia z wariancją niejednorodną. Na wykresie `ACF` objawia się to wystającymi słupkami w punktach `4`, `8` i `12`. Wykres `PACF` również pokazuje mocną zależność w punkcie `4`.
+
+* Brak wartości odstających: Szereg jest bardzo regularny, zdarzają się lata z niższymi wartościami, ale żadna z obserwacji nie odbiega drastycznie od ogólnego wzorca.
+
+\newpage
+
+**Analiza sezonowości**
+
+Aby dokładniej zbadać charakter sezonowości, tworzymy dwa uzupełniające się wykresy za pomocą funkcji `ggseasonplot` oraz `ggmonthplot`.
+
+```{r, fig.width=12, fig.height=8, echo=FALSE, warning=FALSE, message=FALSE}
+library(gridExtra)
+
+p1 <- ggseasonplot(austourists, year.labels = TRUE, year.labels.left = TRUE) +
+  ggtitle("Wykres sezonowy (`ggseasonplot`)") +
+  ylab("Liczba noclegów (w mln)") +
+  theme_bw()
+
+p2 <- ggmonthplot(austourists) +
+  ggtitle("Wykres pod-szeregów (`ggmonthplot`)") +
+  ylab("Liczba noclegów (w mln)") +
+  theme_bw()
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+\vspace{0.5cm}
+
+* Wykres wygenerowany za pomocą funkcji `ggseasonplot`, potwierdza regularny wzorzec sezonowy. Szczyt przyjazdów przypada na pierwszy kwartał, a największy spadek na kwartał drugi. Każda kolejna linia, symbolizująca następne lata jest położona wyżej od poprzedniej, co potwierdza istnienie trendu.
+
+* Wykres, do generacji którego użyliśmy funkcji `ggmonthplot`, pokazuje to zjawisko jeszcze wyraźniej. Analizuje on każdy kwartał z osobna. Widać, że we wszystkich czterech kwartałach obserwacje rosną z roku na rok.
+
+\newpage
+
+### Dekompozycja szeregu czasowego z zastosowaniem różnych metod
+
+**Dekompozycja na podstawie ruchomej średniej**
+
+Rozpoczynamy od klasycznej dekompozycji opartej na średnich ruchomych (funkcja `decompose`). Aby sprawdzić, który model lepiej opisuje dane, przetestujemy oba warianty - addytywny i multiplikatywny.
+
+\vspace{0.5cm}
+
+```{r, fig.width=12, fig.height=9, warning=FALSE, message=FALSE}
+# Dekompozycja addytywna
+dekomp.add <- decompose(austourists, type = "additive")
+autoplot(dekomp.add)
+```
+
+Dwa górne wykresy pokazują oryginalne dane oraz oszacowany, wygładzony trend. Trzeci wykres pokazuje, że wahania sezonowe mają stałą siłę przez cały czas. Kluczowy jest jednak dolny wykres, czyli wykres reszt. Nie są one losowe i nie przypominają białego szumu. Ich wariancja jest duża na początku szeregu (lata `1999-2002`), następnie maleje w środkowym okresie (ok. `2003-2010`), po czym ponownie rośnie pod koniec analizy. Taki nielosowy wzór pokazuje, że model addytywny jest źle dopasowany do tego szeregu.
+
+\newpage
+
+Aby lepiej zwizualizować dopasowanie modelu addytywnego, sumujemy wartości oszacowania dla trendu i sezonowości, i porównamy je z oryginalnym szeregiem
+
+```{r, fig.width=12, fig.height=8}
+dekomp.add.trend      <- dekomp.add$trend
+dekomp.add.sezonowosc <- dekomp.add$seasonal
+dekomp.add.ind.sezon  <- dekomp.add$figure
+dekomp.add.reszty     <- dekomp.add$random
+
+dekomp.add.fit <- dekomp.add.trend + dekomp.add.sezonowosc
+autoplot(cbind(austourists, dekomp.add.fit), ylab="")
+```
+
+Na wykresie widać wyraźnie, że model addytywny nie pasuje dobrze do danych. Jego stała amplituda sezonowa (niebieska linia) nie odzwierciedla rosnących wahań w rzeczywistych danych (czerwona linia). W efekcie model zawyża wartości na początku okresu, a pod koniec je zaniża.
+
+\newpage
+
+W celu poprawy jakości dopasowania wykorzystamy teraz dekompozycje multiplikatywną.
+
+```{r, fig.width=12, fig.height=9}
+# Dekompozycja multiplikatywna
+dekomp.mult <- decompose(austourists, type = "multiplicative")
+autoplot(dekomp.mult)
+```
+
+Zastosowanie dekompozycji multiplikatywnej przyniosło poprawę dopasowania. Widać to przede wszystkim na dolnym wykresie, gdzie reszty są teraz bardziej stabilne. Ich wariancja jest bardziej stała w całym okresie, co eliminuje wzorzec widoczny w modelu addytywnym.
+
+\vspace{0.5cm}
+
+Wnioski:
+
+Analiza za pomocą funkcji `decompose` pokazała, że szereg `austourists` ma naturę multiplikatywną. Model addytywny nie sprawdził się i nie był w stanie poprawnie opisać struktury tych danych. Dopiero zastosowanie dekompozycji multiplikatywnej dało znacznie lepsze wyniki.
+
+\newpage
+
+**Dekompozycja na podstawie modelu regresji**
+
+Zastosujemy teraz metodę dekompozycji na podstawie modelu regresji. Najpierw dopasujemy prosty model uwzględniający liniowy trend i stałą sezonowość.
+
+\vspace{0.5cm}
+
+```{r,  message=FALSE, warning=FALSE, results = 'hide', fig.width=12, fig.height=8}
+# Dekompozycja na podstawie modelu regresji: trend liniowy + sezonowość
+tslm.1 <- tslm(austourists ~ trend + season)
+summary(tslm.1)
+ggtsdisplay(residuals(tslm.1), main = "reszty losowe")
+```
+
+Te wykresy pokazują, że model regresji źle dopasował się do danych. Górny wykres wskazuje na niestabilną wariancję, jest ona duża na początku i na końcu okresu, a wyraźnie mniejsza w środku. Ponadto, wykresy `ACF` i `PACF` pokazują zależności, szczególnie w punkcie `4`, co dowodzi, że model nie wyeliminował w pełni wahań sezonowych.
+
+\newpage
+
+Sprawdźmy, co stanie się gdy analizie poddamy dane zlogarytmowane.
+
+\vspace{0.5cm}
+
+```{r,  message=FALSE, warning=FALSE, results = 'hide', fig.width=12, fig.height=8}
+# Dekompozycja zlogarytmowanych danych na podstawie modelu regresji:
+# trend liniowy + sezonowość
+log.tslm.2 <- tslm(austourists ~ season + trend, lambda = 0)
+summary(log.tslm.2)
+ggtsdisplay(residuals(log.tslm.2), main = "reszty losowe")
+```
+
+Zastosowanie transformacji logarytmicznej nieco poprawiło model. Górny wykres pokazuje, że reszty mają teraz stabilniejszą wariancję. Dolne wykresy pokazują jednak, że reszty wciąż nie są losowe.
+
+\newpage
+
+Do zlogarytmowanych danych zastosujmy teraz model opierający się na trendzie kwadratowym i sezonowości.
+
+\vspace{0.5cm}
+
+```{r, message=FALSE, warning=FALSE, results = 'hide', fig.width=12, fig.height=8}
+# Dekompozycja zlogarytmowanych danych na podstawie modelu regresji: 
+# trend kwadratowy + sezonowość
+log.tslm.3 <- tslm(austourists ~ season + trend + I(trend ^ 2), lambda = 0)
+summary(log.tslm.3)
+ggtsdisplay(residuals(log.tslm.3), main = "reszty losowe")
+```
+
+Dodanie trendu kwadratowego niewiele zmieniło w porównaniu do poprzedniego modelu liniowego, a reszty nadal nie są losowe. 
+
+\newpage
+
+Dekompozycję funkcją **tslm()** przeprowadzimy teraz dla wielomianów różnych stopni, następnie porównamy otrzymane dopasowania.
+
+```{r}
+pop.tslm1 <- tslm(austourists ~ trend + season)
+pop.tslm2 <- tslm(austourists ~ poly(trend, 2, raw = TRUE) + season)
+pop.tslm4 <- tslm(austourists ~ poly(trend, 4, raw = TRUE) + season)
+pop.tslm6 <- tslm(austourists ~ poly(trend, 6, raw = TRUE) + season)
+```
+
+```{r, message=FALSE, warning=FALSE}
+tslm.1 <- fitted(pop.tslm1)
+tslm.2 <- fitted(pop.tslm2)
+tslm.4 <- fitted(pop.tslm4)
+tslm.6 <- fitted(pop.tslm6)
+
+modele <- ts.union(austourists, tslm.1, tslm.2, tslm.4, tslm.6)
+```
+
+```{r, echo=FALSE}
+autoplot(modele, main="Dopasowanie modeli: trend wielomianowy + sezonowość", lwd=1) +
+  scale_colour_manual(values = c(
+    "austourists" = "black",
+    "tslm.1"      = "#ff8ffd",
+    "tslm.2"      = "#8286ff",
+    "tslm.4"      = "#d62d4f",
+    "tslm.6"      = "#5ad664"
+  ))
+```
+
+\newpage
+
+Modele o wyższym stopniu wielomianu, zwłaszcza **tslm.4** i **tslm.6**, stają się przeuczone. Zamiast wygładzać ogólny trend, zaczynają one dopasowywać się do wahań w danych. Widać to na początku i na końcu szeregu. Oznacza to, że te modele są niestabilne i nie nadają się do prognozowania. Prostsze modele (liniowy lub kwadratowy) są tu znacznie bezpieczniejsze.
+
+Możemy teraz wyznaczyć prognozy dla poszczególnych parametrów.
+
+```{r}
+prognozy.pop1 <- forecast(pop.tslm1, h=5)
+prognozy.pop2 <- forecast(pop.tslm2, h=5)
+prognozy.pop4 <- forecast(pop.tslm4, h=5)
+prognozy.pop6 <- forecast(pop.tslm6, h=5)
+```
+
+```{r,echo=FALSE}
+p1 <- autoplot(prognozy.pop1, main="Prognozy (trend liniowy + sezonowość)", flwd = 1)
+p2 <- autoplot(prognozy.pop2, main="Prognozy (trend kwadratowy + sezonowość)", flwd = 1)
+p4 <- autoplot(prognozy.pop4, main="Prognozy (trend st. 4 + sezonowość)", flwd = 1)
+p6 <- autoplot(prognozy.pop6, main="Prognozy (trend st. 6 + sezonowość)", flwd = 1)
+
+library(gridExtra)
+gridExtra::grid.arrange(p1,p2,p4,p6, nrow=2)
+```
+
+Im wyższy stopień wielomianu (szczególnie stopień $6$), tym prognoza za bardzo wystrzeliwuje w górę i staje się nierealistyczna. Sugeruje to, że modele wyższych rzędów są przeuczone i nie nadają się do prognozowania.
+
+\newpage
+
+**Dekompozycja `STL` oparta na metodzie loess**
+
+Teraz przetestujemy dekompozycję `STL`, która jest metodą opartą na wygładzaniu loess. Sprawdzimy, jak zmiana kluczowych parametrów wygładzających, czyli `s.window` dla sezonowości i `t.window` dla trendu, wpływa na kształt poszczególnych składowych.
+
+\vspace{0.5cm}
+
+```{r, fig.width=12, fig.height=8}
+# Dekompozycja STL: s.window = "periodic", t.window - domyślne'
+dekomp.stl.1 <- stl(austourists,  s.window="periodic")
+autoplot(dekomp.stl.1) + 
+  ggtitle('Parametry: s.window="periodic", t.window - domyślne')
+```
+
+W tym przypadku nasz model znalazł jeden, stały wzorzec sezonowy, który powtarza się w każdym roku. Amplituda tych wahań jest niezmienna w czasie. Na wykresie reszt, możemy zauważyć, że nie są one losowe. Oznacza to, że ten konkretny model jest źle dopasowany do danych.
+
+\newpage
+
+Sprawdźmy teraz, jaki wpływ na wyniki będą miały różne parametry wygładzające.
+
+\vspace{0.5cm}
+
+```{r,  fig.width=16, fig.height=12, message=FALSE, warning=FALSE, echo=FALSE}
+dekomp.stl.2 <- stl(austourists, s.window=7) 
+p1 <- autoplot(dekomp.stl.2) + 
+  ggtitle('Parametry: s.window = 7, t.window - domyślne')
+
+dekomp.stl.3 <- stl(austourists, s.window=13) 
+p2 <- autoplot(dekomp.stl.3) + 
+  ggtitle('Parametry: s.window = 13, t.window - domyślne')
+
+dekomp.stl.4 <- stl(austourists, s.window=13, t.window=7) 
+p3 <- autoplot(dekomp.stl.4) + 
+  ggtitle('Parametry: s.window = 13, t.window = 7')
+
+dekomp.stl.6 <- stl(austourists, s.window=13, t.window=21) 
+p4 <- autoplot(dekomp.stl.6) + 
+  ggtitle('Parametry: s.window = 13, t.window  = 21')
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+Zmiana parametrów `t.window` i `s.window` wpłynęła na wygląd składowych, ale nie rozwiązała głównego problemu. Zmiany były widoczne głównie w linii trendu: mniejsza wartość `t.window` (np. `7`) dała trend bardziej pofalowany, podczas gdy większa (np. `21`) mocno go wygładziła. We wszystkich czterech przypadkach panel reszt nie uległ poprawie. Wyniki te pokazują, że problemem nie są ustawienia wygładzania, ale niedopasowanie addytywnej metody `STL` do danych.
+
+\newpage
+
+### Transformacja Boxa-Coxa
+
+Poprzednio testowane metody dekompozycji nie przyniosły oczekiwanych rezultatów. Sprawdźmy jednak, jak zachowają się dane, jeżeli najpierw zastosujemy transformację stabilizującą wariancję, a następnie wykorzystamy model dekompozycji addytywnej.
+
+Zastosujmy transformacje Boxa-Coxa do dekompozycji na podstawie modelu regresji.
+
+\vspace{0.5cm}
+
+```{r,  message=FALSE, warning=FALSE, results = 'hide', fig.width=12, fig.height=8}
+tslm.1 <- tslm(austourists ~ trend + season, lambda = "auto")
+summary(tslm.1)
+ggtsdisplay(residuals(tslm.1), 
+            main = "reszty losowe po transformacji Boxa-Coxa")
+```
+
+Zmiana polegała na dodaniu argumentu `lambda = "auto"` do funkcji `tslm()`. To polecenie znalazło najlepszą wartość parametru $\lambda$ transformacji Boxa-Coxa i dopasowało model regresji.
+
+Zastosowanie transformacji przyniosło poprawę. Górny wykres, pokazuje, że wariancja reszt została ustabilizowana. Zniknął nielosowy wzorzec, a reszty oscylują teraz wokół zera w miarę równomiernie.
+
+\newpage
+
+### Porównanie z metodą różnicowania
+
+Jako ostatni etap analizy, porównamy wyniki uzyskane z dekompozycji z inną metodą eliminacji niestacjonarności - z różnicowaniem (funkcja `diff()`). Zamiast modelować trend i sezonowość, spróbujemy je po prostu usunąć, aby uzyskać szereg stacjonarny.
+
+Ponieważ szereg `austourists` ma silny trend oraz wyraźną sezonowość, zastosujemy podwójne różnicowanie. Naszym celem jest sprawdzenie, czy otrzymany w ten sposób szereg reszt będzie można uznać za stacjonarny, tzn. czy jego wykresy `ACF` i `PACF` będą przypominać biały szum.
+
+\vspace{0.5cm}
+
+```{r,  message=FALSE, warning=FALSE, fig.width=12, fig.height=8}
+library(magrittr)
+austourists %>%
+  diff(lag = 4, differences = 1) %>%
+  diff(lag = 1, differences = 1) %>%
+  ggtsdisplay(main = "Reszty po podwójnym różnicowaniu")
+```
+
+Różnicowanie skutecznie usunęło niestacjonarność. Górny wykres pokazuje szereg, który oscyluje wokół stałego poziomu i ma stabilną wariancję. Oznacza to, że udało się usunąć zarówno trend, jak i sezonowość.
+Mimo, że szereg jest stacjonarny, to nie jest to jednak biały szym. Dolne wykresy pokazują, że wciąż pozostała w nim pewna autokorelacja.
+
+\newpage
+
+### Wnioski
+
+* Wstępna analiza graficzna wykazała, że szereg `austourists` jest niestacjonarny. Charakteryzuje się on wyraźnym trendem wzrostowym, silną sezonowością oraz niejednorodną wariancją.
+
+* Porównanie metod dekompozycji pokazało, że standardowe modele addytywne były źle dopasowane. Wszystkie te metody pozostawiały nielosowe wzorce w resztach.
+
+* Testowanie parametrów wewnątrz tych metod, jak zmiana trendu na kwadratowy w `tslm` czy zmiana okien parametrów w `stl`, nie poprawiły znacząco tego problemu niedopasowania.
+
+* Jedynymi metodami dekompozycji, które dały zadowalające rezultaty, były dekompozycja multiplikatywna oraz model `tslm` z transformacją Boxa-Coxa.
+
+* Porównanie dekompozycji z różnicowaniem wykazało, że podwójne różnicowanie również było skuteczną metodą eliminacji trendu i sezonowości.
+
+* Ostatecznie, ani dekompozycja, ani różnicowanie nie dały w wyniku idealnego białego szumu. W obu przypadkach w resztach pozostała pewna autokorelacja widoczna na wykresach `ACF` i `PACF`, co sugeruje, że do pełnego opisu danych potrzebny byłby jeszcze bardziej złożony model dekompozycji.
+

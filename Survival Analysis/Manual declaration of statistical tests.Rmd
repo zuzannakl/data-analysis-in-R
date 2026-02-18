@@ -1,0 +1,210 @@
+---
+title: "Ręczna deklaracja testów statystycznych"
+author: "Zuzanna Klaman"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    fig_caption: true
+    fig_width: 9
+    fig_height: 8
+    number_sections: true
+  word_document:
+    toc: true
+  html_document:
+    toc: true
+    df_print: paged
+header-includes:
+- \usepackage[OT4]{polski}
+- \usepackage[utf8]{inputenc}
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage{subfig}
+- \usepackage{enumitem}
+- \setlist{leftmargin=*}
+- \sloppy
+subtitle: Analiza przeżycia
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE, cache=TRUE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+knitr::opts_chunk$set(dev = "CairoPDF") 
+library(arules)
+library(dplyr)
+library(knitr)
+library(ipred)
+
+options(encoding = "UTF-8")
+```
+
+\newpage
+
+# Deklaracje funkcji testów statystycznych.
+
+Do sprawdzenia poprawności wyników użyłam dane z badania obejmującego pacjentki z rakiem jajnika w stadium II lub IIIA.
+
+```{r, echo=FALSE}
+czasy_ii <- c(28, 89, 175, 195, 309, 377, 393, 421, 447, 462, 709, 744, 770, 1106, 1206)
+status_ii <- c(1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0)
+
+czasy_iiia <- c(34, 88, 137, 199, 280, 291, 299, 300, 309, 351, 358, 369, 369, 370, 375, 382, 392, 429, 451, 1119)
+status_iiia <- c(1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0)
+
+dane <- data.frame(
+  czas = c(czasy_ii, czasy_iiia),
+  status = c(status_ii, status_iiia),
+  grupa = factor(c(rep("II", length(czasy_ii)), rep("IIIA", length(czasy_iiia))))
+)
+```
+
+
+## Test log-rank
+
+```{r, echo=TRUE}
+library(survival)
+
+czasy <- sort(unique(dane$czas[dane$status == 1]))
+Z <- 0
+V <- 0
+
+for(t in czasy){
+  r1 <- sum(dane$czas >= t & dane$grupa == "II")
+  r2 <- sum(dane$czas >= t & dane$grupa == "IIIA")
+  r <- r1 + r2
+  
+  d1 <- sum(dane$czas == t & dane$status == 1 & dane$grupa == "II")
+  d2 <- sum(dane$czas == t & dane$status == 1 & dane$grupa == "IIIA")
+  d <- d1 + d2
+  
+  if(r > 1 && d > 0){
+    var_s <- d * (r1 / r) * (1 - r1 / r) * ((r - d) / (r - 1))
+    w <- 1 
+    Z <- Z + w * (d1 - (r1 * d / r))
+    V <- V + (w^2) * var_s
+  }
+}
+
+chi <- (Z^2) / V
+p_val_1 <- 1 - pchisq(chi, df = 1)
+```
+
+```{r, echo=FALSE}
+cat("Log-Rank:\n")
+cat("p-value:", format.pval(p_val_1, eps=0.001))
+```
+
+\newpage
+
+## Test Gehana i Breslowa
+
+```{r}
+library(survival)
+
+czasy <- sort(unique(dane$czas[dane$status == 1]))
+Z <- 0
+V <- 0
+
+for(t in czasy){
+  r1 <- sum(dane$czas >= t & dane$grupa == "II")
+  r2 <- sum(dane$czas >= t & dane$grupa == "IIIA")
+  r <- r1 + r2
+   
+  d1 <- sum(dane$czas == t & dane$status == 1 & dane$grupa == "II")
+  d2 <- sum(dane$czas == t & dane$status == 1 & dane$grupa == "IIIA")
+  d <- d1 + d2
+   
+  if(r > 1 && d > 0){
+    var_s <- d * (r1 / r) * (1 - r1 / r) * ((r - d) / (r - 1))
+    w <- r
+    Z <- Z + w * (d1 - (r1 * d / r))
+    V <- V + (w^2) * var_s
+  }
+}
+
+chi <- (Z^2) / V
+p_val_2 <- 1 - pchisq(chi, df = 1)
+```
+
+```{r, echo=FALSE}
+cat("Gehan-Breslow:\n")
+cat("p-value:", format.pval(p_val_2, eps=0.001))
+```
+
+\newpage
+
+## Test Tarone’a-Warego
+
+```{r}
+library(survival)
+
+czasy <- sort(unique(dane$czas[dane$status == 1]))
+Z <- 0
+V <- 0
+
+for(t in czasy){
+  r1 <- sum(dane$czas >= t & dane$grupa == "II")
+  r2 <- sum(dane$czas >= t & dane$grupa == "IIIA")
+  r <- r1 + r2
+   
+  d1 <- sum(dane$czas == t & dane$status == 1 & dane$grupa == "II")
+  d2 <- sum(dane$czas == t & dane$status == 1 & dane$grupa == "IIIA")
+  d <- d1 + d2
+   
+  if(r > 1 && d > 0){
+    var_s <- d * (r1 / r) * (1 - r1 / r) * ((r - d) / (r - 1))
+    w <- sqrt(r)
+    Z <- Z + w * (d1 - (r1 * d / r))
+    V <- V + (w^2) * var_s
+  }
+}
+
+chi <- (Z^2) / V
+p_val_3 <- 1 - pchisq(chi, df = 1)
+```
+
+```{r, echo=FALSE}
+cat("Tarone-Ware:\n")
+cat("p-value:", format.pval(p_val_3, eps=0.001))
+```
+
+\newpage 
+
+## Test Peto-Peto
+
+```{r}
+library(survival)
+
+czasy <- sort(unique(dane$czas[dane$status == 1]))
+Z <- 0
+V <- 0
+S_t <- 1
+
+for(t in czasy){
+  r1 <- sum(dane$czas >= t & dane$grupa == "II")
+  r2 <- sum(dane$czas >= t & dane$grupa == "IIIA")
+  r <- r1 + r2
+   
+  d1 <- sum(dane$czas == t & dane$status == 1 & dane$grupa == "II")
+  d2 <- sum(dane$czas == t & dane$status == 1 & dane$grupa == "IIIA")
+  d <- d1 + d2
+   
+  if(r > 1 && d > 0){
+    S_t <- S_t * (1 - d / (r + 1))
+    w <- S_t
+    var_s <- d * (r1 / r) * (1 - r1 / r) * ((r - d) / (r - 1))
+    Z <- Z + w * (d1 - (r1 * d / r))
+    V <- V + (w^2) * var_s
+  }
+}
+
+chi <- (Z^2) / V
+p_val_4 <- 1 - pchisq(chi, df = 1)
+```
+
+```{r, echo=FALSE}
+cat("Peto-Peto:\n")
+cat("p-value:", format.pval(p_val_4, eps=0.001))
+```

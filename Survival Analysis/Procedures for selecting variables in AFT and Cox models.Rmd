@@ -1,0 +1,296 @@
+---
+title: "Procedury selekcji zmiennych w modelach AFT i Coxa"
+author: "Zuzanna Klaman"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    fig_caption: true
+    fig_width: 9
+    fig_height: 8
+    number_sections: true
+  word_document:
+    toc: true
+  html_document:
+    toc: true
+    df_print: paged
+header-includes:
+- \usepackage[OT4]{polski}
+- \usepackage[utf8]{inputenc}
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage{subfig}
+- \usepackage{enumitem}
+- \setlist{leftmargin=*}
+- \sloppy
+subtitle: Analiza przeżycia
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE, cache=TRUE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+knitr::opts_chunk$set(dev = "CairoPDF") 
+library(arules)
+library(dplyr)
+library(knitr)
+library(ipred)
+
+options(encoding = "UTF-8")
+```
+
+```{r, echo=FALSE}
+options(width = 75) 
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\newpage
+
+# Dalsza diagnostyka modeli
+
+```{r, echo=TRUE, warning=FALSE}
+library(survival)
+data(lung)
+dane <- lung[, c("time", "status", "age", "sex", "ph.ecog", "ph.karno")]
+dane <- na.omit(dane)
+dane$status <- ifelse(dane$status == 2, 1, 0)
+srednia_wieku <- mean(dane$age)
+srednia_karno <- mean(dane$ph.karno)
+dane$age <- dane$age - srednia_wieku
+dane$ph.karno <- dane$ph.karno - srednia_karno
+```
+
+## Procedury wyboru zmiennych i optymalizacja modelu AFT z użyciem kryteriów AIC i BIC
+
+Rozważono model przyspieszonego czasu awarii, w którym bazowa funkcja przeżycia opisana jest rozkładem Weibulla. Jako zmienną zależną przyjęto zmienną `time`, natomiast do opisu charakterystyk pacjentów wykorzystano zmienne `age`, `sex`, `ph.ecog` oraz `ph.karno`.
+
+\vspace{0.5cm}
+
+**Podpunkt (a)**
+
+W celu doboru zmiennych do modelu `AFT` zastosujemy metodę eliminacji, opartą na wynikach testu ilorazu wiarygodności. Na początku zbudowano pełny model i w każdym kroku eliminowano zmienną z największą p-value do momentu, w którym każda zmienna miała p-value mniejsze od ustalonego poziomu istotności $0.05$.
+
+```{r, echo=TRUE}
+model_aft <- survreg(Surv(time, status) ~ age + as.factor(sex) + as.factor(ph.ecog) 
+                     + ph.karno, data = dane, dist = "weibull")
+
+aft_1 <- drop1(model_aft, test = "Chisq")
+```
+
+```{r tab:Tabela1, echo=FALSE}
+library(kableExtra)
+tabela_1 <- data.frame(
+  Zmienna = rownames(aft_1)[-1],
+  `p-value` = round(aft_1[-1, "Pr(>Chi)"], 4),
+  check.names = FALSE)
+
+kable(tabela_1, format = "latex", booktabs = TRUE, align = "lc", 
+      caption = "Weryfikacja istotności zmiennych w modelu AFT - krok 1 \\label{tab:Tabela1}") %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE, position = "center")
+```
+
+Jak możemy zauważyć na tabeli \ref{tab:Tabela1} największą wartość p-value ma zmienna `age`, więc następny model budujemy właśnie bez niej.
+
+\vspace{0.6cm}
+
+```{r, echo=TRUE}
+model_aft_2 <- survreg(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog) 
+                     + ph.karno, data = dane, dist = "weibull")
+
+aft_2 <- drop1(model_aft_2, test = "Chisq")
+```
+
+```{r tab:Tabela2, echo=FALSE}
+library(kableExtra)
+tabela_2 <- data.frame(
+  Zmienna = rownames(aft_2)[-1],
+  `p-value` = round(aft_2[-1, "Pr(>Chi)"], 4),
+  check.names = FALSE)
+
+kable(tabela_2, format = "latex", booktabs = TRUE, align = "lc", 
+      caption = "Weryfikacja istotności zmiennych w modelu AFT - krok 2 \\label{tab:Tabela2}") %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE, position = "center")
+```
+
+Tym razem, na podstawie tabeli \ref{tab:Tabela2} widzimy, że największą wartość p-value miała zmienna `ph.karno`. Budujemy zatem nowey model bez tej zmiennej.
+
+\vspace{0.6cm}
+
+```{r, echo=TRUE}
+model_aft_3 <- survreg(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog),
+                       data = dane, dist = "weibull")
+
+aft_3 <- drop1(model_aft_3, test = "Chisq")
+```
+
+```{r tab:Tabela3, echo=FALSE}
+library(kableExtra)
+tabela_3 <- data.frame(
+  Zmienna = rownames(aft_3)[-1],
+  `p-value` = round(aft_3[-1, "Pr(>Chi)"], 4),
+  check.names = FALSE)
+
+kable(tabela_3, format = "latex", booktabs = TRUE, align = "lc", 
+      caption = "Weryfikacja istotności zmiennych w modelu AFT - krok 3 \\label{tab:Tabela3}") %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE, position = "center")
+```
+
+Widzimy, że w tabeli \ref{tab:Tabela3} zostały tylko dwie zmienne i każda z nim ma wartość p-value mniejszą od ustalonego poziomu istotności $0.05$. Zatem wybranymi charakterystykami w modelu będą `sex` oraz `ph.ecog`. Zmienna ECOG ma mniejszą wartość $p$ niż płeć. Sugeruje to, że kliniczna ocena sprawności pacjenta jest statystycznie jeszcze silniejszym sygnałem dla modelu niż różnice wynikające z płci, choć oba czynniki są kluczowe.
+
+\newpage
+
+**Podpunkt (b)**
+
+Do wyboru najlepszego modelu przyspieszonego czasu awarii wykorzystamy teraz kryterium informacyjne `AIC`.
+
+```{r, echo=TRUE}
+model_aic <- step(model_aft, direction = "backward")
+```
+
+\newpage
+
+Krok 1:
+
+* zaczynamy z `AIC` = 2266.6, model jest pełny
+
+* funkcja widzi, że usunięcie zmiennej `age` obniży `AIC` do $2266.2$, więc usuwamy zmienną `age`.
+
+Krok 2:
+
+* mamy model `sex` + `ph.ecog` + `ph.karno`
+
+* funkcja widzi, że usunięcie `ph.karno` obnniży `AIC` do poziomu $2266.1$
+
+Krok 3:
+
+* mamy model `sex` + `ph.ecog` 
+
+* Jeśli usuniemy `sex`, `AIC` podniesie się do $2274.7$, a jeśli usuniemy `ph.ecog`, podniesie się do $2278.4$.
+
+* Zatem żadna redukcja nie poprawi już modelu.
+
+Zatem zgodnie z kryterium `AIC`, najbardziej optymalnym modelem przyspieszonego czasu awarii jest ten zawierający zmienne `sex` oraz `ph.ecog`.
+
+\newpage
+
+**Podpunkt (c)**
+
+Korzystając z bayesowskiego kryterium informacyjnego (`BIC`), dokonamy wyboru najlepszego modelu przyspieszonego czasu awarii.
+
+```{r}
+R <- sum(dane$status)
+bic_aft <- step(model_aft, direction="backward", k = log(R))
+```
+
+\vspace{0.3cm}
+
+Podobnie jak w podpunkcie (b), analizę rozpoczęto od pełnego modelu `AFT` uwzględniającego zmienne `age`, `sex`, `ph.ecog` oraz `ph.karno`. Następnie, w kolejnych krokach stopniowo usuwano zmienne w celu optymalizacji kryterium informacyjnego. Najpierw odrzucono `age`, a następnie `ph.karno`. Ostatecznie uzyskano model taki sam jak ten przedstawionym w podpunkcie (a). Skutkuje to taką samą interpretacją wyników. Funkcja `step` wyświetla wartości `AIC`, jednak dla parametru $k = log(R)$, gdzie $R$ oznacza liczbę pełnych obserwacji, wyznaczana jest wartość `BIC`.
+
+\newpage
+
+## Selekcja cech w modelu Coxa metodą eliminacji krokowej
+
+Przyjmiemy model proporcjonalnych hazardów Coxa. Jako zmienną zależną przyjęto zmienną `time`, natomiast do opisu charakterystyk pacjentów wykorzystano zmienne `age`, `sex`, `ph.ecog` oraz `ph.karno`.
+
+**Podpunkt (a)**
+
+Korzystając z metody eliminacji, w oparciu o test ilorazu wiarogodności, dokonano wyboru zmiennych do modelu przyspieszonego czasu awarii. Na początku zbudowano pełny model Coxa i w każdym kroku eliminowano zmienną z największą p-value do momentu, w którym każda zmienna miała p-value mniejsze od ustalonego poziomu istotności $0.05$.
+
+```{r}
+model_cox <- coxph(Surv(time, status) ~ age + as.factor(sex) + 
+                     as.factor(ph.ecog) + ph.karno, data = dane)
+
+cox_1 <- drop1(model_cox, test = "Chisq")
+```
+
+```{r tab:Tabela4, echo=FALSE}
+library(kableExtra)
+tabela_1 <- data.frame(
+  Zmienna = rownames(cox_1)[-1],
+  `p-value` = round(cox_1[-1, "Pr(>Chi)"], 4),
+  check.names = FALSE)
+
+kable(tabela_1, format = "latex", booktabs = TRUE, align = "lc", 
+      caption = "Weryfikacja istotności zmiennych w modelu Coxa - krok 1 \\label{tab:Tabela4}") %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE, position = "center")
+```
+
+Jak możemy zauważyć na tabeli \ref{tab:Tabela4} największą wartość p-value ma zmienna `ph.karno`, więc następny model budujemy właśnie bez niej.
+
+\vspace{0.6cm}
+
+```{r}
+model_cox2 <- coxph(Surv(time, status) ~ age + as.factor(sex) + 
+                     as.factor(ph.ecog), data = dane)
+
+cox_2 <- drop1(model_cox2, test = "Chisq")
+```
+
+```{r tab:Tabela5, echo=FALSE}
+library(kableExtra)
+tabela_2 <- data.frame(
+  Zmienna = rownames(cox_2)[-1],
+  `p-value` = round(cox_2[-1, "Pr(>Chi)"], 4),
+  check.names = FALSE)
+
+kable(tabela_2, format = "latex", booktabs = TRUE, align = "lc", 
+      caption = "Weryfikacja istotności zmiennych w modelu Coxa - krok 2 \\label{tab:Tabela5}") %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE, position = "center")
+```
+
+Tym razem, na podstawie tabeli \ref{tab:Tabela5} widzimy, że największą wartość p-value miała zmienna `age`. Budujemy zatem nowey model bez tej zmiennej.
+
+\vspace{0.6cm}
+
+```{r}
+model_cox3 <- coxph(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog), 
+                    data = dane)
+
+cox_3 <- drop1(model_cox3, test = "Chisq")
+```
+
+```{r tab:Tabela6, echo=FALSE}
+library(kableExtra)
+tabela_3 <- data.frame(
+  Zmienna = rownames(cox_3)[-1],
+  `p-value` = round(cox_3[-1, "Pr(>Chi)"], 4),
+  check.names = FALSE)
+
+kable(tabela_3, format = "latex", booktabs = TRUE, align = "lc", 
+      caption = "Weryfikacja istotności zmiennych w modelu Coxa - krok 3 \\label{tab:Tabela6}") %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE, position = "center")
+```
+
+Widzimy, że w tabeli \ref{tab:Tabela6} zostały tylko dwie zmienne i każda z nim ma wartość p-value mniejszą od ustalonego poziomu istotności $0.05$. Zatem wybranymi charakterystykami w modelu będą `sex` oraz `ph.ecog`. Są to te same zmienne, jak w przypadku modelu `AFT`. Zmienną `ph.ecog` możemy uznać za najsilniejszy predyktor w modelu, ponieważ ma najniższe p-value. Sugeruje to, że kliniczna ocena tego, jak pacjent radzi sobie z codziennymi czynnościami, jest najlepszym wskaźnikiem tego, jakie ma szanse na przeżycie.
+
+\newpage
+
+**Podpunkt (b)**
+
+Do wyboru najlepszego modelu przyspieszonego czasu awarii wykorzystamy teraz kryterium informacyjne `AIC`.
+
+```{r}
+aic_cox <- step(model_cox, direction="backward")
+```
+
+\vspace{0.3cm}
+
+Analizę rozpoczęto od pełnego modelu Coxa, obejmującego zmienne `age`, `sex`, `ph.ecog` oraz `ph.karno`. Następnie, w kolejnych krokach eliminacji, stopniowo usuwano zmienne w celu uzyskania lepszej wartości kryterium `AIC`. Najpierw odrzucono `ph.karno`, a następnie `age`. Po zakończeniu tego procesu uzyskano model identyczny z przedstawionym w punkcie (a), co pozwala na taką samą interpretację wyników.
+
+\newpage
+
+**Podpunkt (c)**
+
+Wykorzystując funkcję `step` dokonamy wyboru zmiennych do modelu Coxa, korzystając z kryterium `BIC`.
+
+```{r}
+R <- sum(dane$status) # liczba obserwacji kompletnych
+bic_cox <- step(model_cox, direction="backward", k = log(R))
+```
+
+\vspace{0.3cm}
+
+Analogicznie do punktu (b), procedurę rozpoczęto od pełnego modelu Coxa, obejmującego zmienne `age`, `sex`, `ph.ecog` oraz `ph.karno`. W kolejnych krokach, w celu poprawy wartości kryterium `BIC`, stopniowo eliminowano poszczególne zmienne, najpierw `ph.karno`, a następnie `age`. Po zakończeniu tej procedury uzyskano model identyczny z tym przedstawionym w punktach (a) i (b), co pozwala na taką samą interpretację wyników. 
+
+Warto zauważyć, że uzyskane wnioski są spójne ze wcześniejszymi obserwacjami. W modelach wybrano te zmienne, dla których nie było podstaw do odrzucenia hipotezy sugerującej ich istotny wpływ na analizowany czas przeżycia.

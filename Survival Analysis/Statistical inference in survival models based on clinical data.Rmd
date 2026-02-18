@@ -1,0 +1,613 @@
+---
+title: "Wnioskowanie statystyczne w modelach czasu życia na podstawie danych klinicznych"
+author: "Zuzanna Klaman"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    fig_caption: true
+    fig_width: 9
+    fig_height: 8
+    number_sections: true
+  word_document:
+    toc: true
+  html_document:
+    toc: true
+    df_print: paged
+header-includes:
+- \usepackage[OT4]{polski}
+- \usepackage[utf8]{inputenc}
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage{subfig}
+- \usepackage{enumitem}
+- \setlist{leftmargin=*}
+- \sloppy
+subtitle: Analiza przeżycia
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE, cache=TRUE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+knitr::opts_chunk$set(dev = "CairoPDF") 
+library(arules)
+library(dplyr)
+library(knitr)
+library(ipred)
+
+options(encoding = "UTF-8")
+```
+
+\newpage
+
+# Estymacja funkcji przeżycia i analiza asymptotyczna
+
+## Porównanie estymatorów Kaplana-Meiera i Fleminga-Harringtona
+
+Celem jest zaprezentowanie wykresów dwóch różnych estymatorów przeżycia: Kaplana-Meiera oraz Fleminga-Harringtona. Wykorzystamy dane używane wcześniej, opisujące czasy do remisji choroby w dwóch grupach pacjentów leczonych lekami A i B.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(survival)
+library(survminer)
+
+czasy_remisji_A <- c(0.03345514, 0.08656403, 0.08799947, 0.24385821, 0.27755032,
+                     0.40787247, 0.58825664, 0.64125620, 0.90679161, 0.94222208)
+czasy_cenzury_A <- rep(1.0, 10) 
+
+dane.A <- data.frame(
+  time = c(czasy_remisji_A, czasy_cenzury_A),
+  status = c(rep(1, 10), rep(0, 10))
+)
+
+czasy_remisji_B <- c(0.03788958, 0.12207257, 0.20319983, 0.24474299, 0.30492413,
+                     0.34224462, 0.42950144, 0.44484582, 0.63805066, 0.69119721)
+czasy_cenzury_B <- rep(1.0, 10)
+
+dane.B <- data.frame(
+  time = c(czasy_remisji_B, czasy_cenzury_B),
+  status = c(rep(1, 10), rep(0, 10))
+)
+```
+
+### Estymatory Kaplana-Meiera
+
+Wykres przedstawiający estymatory Kaplana-Meiera: 
+
+```{r}
+km.fit.A <- survfit(Surv(time, status)~1, data=dane.A, type="kaplan-meier")
+km.fit.B <- survfit(Surv(time, status)~1, data=dane.B, type="kaplan-meier")
+```
+
+```{r wykres1, fig.width=8, fig.height=5.5, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Estymatory Kaplana-Meiera dla leku A i B"}
+km.df.A <- data.frame(time = c(0, km.fit.A$time), surv = c(1, km.fit.A$surv), lek = "A")
+km.df.B <- data.frame(time = c(0, km.fit.B$time), surv = c(1, km.fit.B$surv), lek = "B")
+
+km.df.all <- rbind(km.df.A, km.df.B)
+
+ggplot(data = km.df.all, aes(x = time, y = surv, color = lek)) + geom_step(size = 1) + ylim(0, 1) +
+  labs(x = "Czas do remisji", y = "Prawdopodobieństwo braku remisji") +
+  theme_minimal() + scale_color_manual(values = c("A" = "#5ec44f", "B" = "#d44c61"))
+```
+
+Na podstawie wykresu \ref{fig:wykres1} można stwierdzić, że lek B wskazuje lepszą skuteczność. Mimo że w początkowej fazie krzywe przeżycia przebiegają blisko siebie i wielokrotnie się przecinają, to w końcowym etapie obserwacji krzywa dla leku B opada szybciej. Oznacza to, że wszyscy pacjenci z grupy B osiągnęli remisję w czasie krótszym niż pacjenci z grupy A.
+
+\newpage
+
+### Estymatory Fleminga-Harringtona
+
+Wykres przedstawiający estymatory Fleminga-Harringtona: 
+
+```{r}
+fh.fit.A <- survfit(Surv(time, status)~1, data=dane.A, 
+                    type = "fleming-harrington")
+fh.fit.B <- survfit(Surv(time, status)~1, data=dane.B, 
+                    type = "fleming-harrington")
+```
+
+```{r wykres2, fig.width=8, fig.height=5.5, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Estymatory Fleminga-Harringtona dla leku A i B"}
+fh.df.A <- data.frame(time = c(0, fh.fit.A$time), surv = c(1, fh.fit.A$surv), lek = "A")
+fh.df.B <- data.frame(time = c(0, fh.fit.B$time), surv = c(1, fh.fit.B$surv), lek = "B")
+
+fh.df.all <- rbind(fh.df.A, fh.df.B)
+
+ggplot(data = fh.df.all, aes(x = time, y = surv, color = lek)) + geom_step(size = 1) + ylim(0, 1) +
+  labs(x = "Czas do remisji", y = "Prawdopodobieństwo braku remisji") +
+  theme_minimal() + scale_color_manual(values = c("A" = "#5ec44f", "B" = "#d44c61"))
+```
+
+Analiza wykresu \ref{fig:wykres2} wykazuje spójność z wynikami uzyskanymi metodą Kaplana-Meiera. Wybór innego estymatora nie wpłynął na interpretację danych, krzywe zachowują podobny przebieg, uwydatniając końcową przewagę leku B w szybkości leczenia.
+
+\newpage
+
+## Implementacja estymatora Kaplana-Meiera z ogonem BHK
+
+Zaimplementujemy algorytm rysujący estymator Kaplana-Meiera z dorysowanym ogonem według propozycji Browna, Hollandera i Kowara. Stworzony program posłużył do wygenerowania wykresów funkcji przeżycia dla pacjentów przyjmujących lek A oraz lek B.
+
+\vspace{0.5cm}
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(survival)
+km_bhk <- function(time, status, label, t_max = 4.0){
+  model_km <- survfit(Surv(time, status)~1)
+  
+  df_km <- data.frame(time = model_km$time,
+    surv = model_km$surv, type = "Kaplan-Meier")
+  
+  df_km <- rbind(data.frame(time = 0, surv = 1, 
+                            type = "Kaplan-Meier"), df_km)
+  
+  ostatnie_t <- length(model_km$time)
+  t_plus <- max(model_km$time)
+  s_t_plus <- model_km$surv[ostatnie_t]
+  df_ogon <- NULL
+  
+  if (s_t_plus > 0){
+    t <- seq(from = t_plus, to = t_max, length.out = 200)
+    estymator <- exp((log(s_t_plus) / t_plus) * t)
+    
+    df_ogon <- data.frame(time = t, surv = estymator,
+      type = "Ogon BHK")
+  } 
+  else
+    df_ogon <- data.frame(time = c(t_plus, t_max), 
+                          surv = c(0, 0), type = "Ogon BHK")
+  
+  df <- rbind(df_km, df_ogon)
+  df$label <- label
+  return(df)
+}
+```
+
+\newpage
+
+```{r wykres3, echo=FALSE, fig.width=8, fig.height=6, fig.pos="H", fig.cap="Estymator Fleminga-Harringtona - BHK dla leku A i B"}
+dane_wykres_A <- km_bhk(dane.A$time, dane.A$status, label = "Lek A", t_max = 3.0)
+dane_wykres_B <- km_bhk(dane.B$time, dane.B$status, label = "Lek B", t_max = 3.0)
+
+dane_calosc <- rbind(dane_wykres_A, dane_wykres_B)
+
+ggplot(dane_calosc, aes(x = time, y = surv, color = label)) + geom_step(data = subset(dane_calosc, type == "Kaplan-Meier"), 
+  linewidth = 1) + geom_line(data = subset(dane_calosc, type == "Ogon BHK"),  linetype = "dashed", linewidth = 1) +
+  ylim(0, 1) + labs(x = "Czas do remisji", y = "Prawdopodobieństwo braku remisji", color = "Lek") +  
+  theme_minimal() + scale_color_manual(values = c("Lek A" = "#5ec44f", "Lek B" = "#d44c61"))
+```
+
+\vspace{0.5cm}
+
+Zastosowanie estymatora Browna, Hollandera i Kowara (zobacz rysunek \ref{fig:wykres3})  pozwoliło na prognozę przebiegu remisji poza okres obserwacji. Dorysowany ogon dąży do zera, co sugeruje, że przy wystarczająco długim czasie obserwacji remisja wystąpiłaby u całej populacji pacjentów. Proces ten jest jednak rozciągnięty w czasie. Model przewiduje, że po upływie dwóch lat odsetek pacjentów bez remisji spadłby do poziomu $0.25$. Wkazuje to na konieczność dłuższego monitorowania pacjentów w celu potwierdzenia skuteczności leków. 
+
+\newpage
+
+## Analiza asymptotycznej normalności estymatora Kaplana-Meiera
+
+Wyznaczymy oszacowania funkcji przeżycia dla danych cenzurowanych I-go typu. Na podstawie wygenerowanych zbiorów obliczono wartości funkcji przeżycia w punktach $t_{0}$ i $2t_{0}$, korzystając z estymatora Kaplana–Meiera z ogonem estymowanym zgodnie z propozycją Browna, Hollandera i Kowara. Otrzymane wyniki przedstawiono w formie histogramów.
+
+```{r, echo=FALSE}
+Q_GE <- function(p, lambda, alpha){
+  -1/lambda * log(1 - p^(1/alpha))
+}
+
+losowe_GE <- function(n, lambda, alpha){
+  u <- runif(n)
+  x <- Q_GE(u, lambda, alpha) 
+  return(x)
+}
+
+funkcja_1 <- function(n, lambda, alpha, t0){
+  x <- losowe_GE(n, lambda, alpha)
+  t <- pmin(x, t0)
+  warunek <- ifelse(x <= t0, 1, 0)
+  data.frame(czas = t, cenzura = warunek)
+}
+```
+
+```{r, echo=FALSE}
+library(survival)
+
+set.seed(123456)
+
+lambda <- 0.5
+alpha <- 1.2
+t0 <- 2.2
+
+M <- 1000
+wartosci_n <- c(30, 50, 100)
+
+oblicz_wartosc_bhk <- function(time, status, t0){
+  model_km <- survfit(Surv(time, status) ~ 1)
+  ostatnie_t <- length(model_km$time)
+  t_plus <- max(model_km$time)
+  s_t_plus <- model_km$surv[ostatnie_t]
+  
+  if (t0 <= t_plus){
+    czasy <- model_km$time
+    indeks <- findInterval(t0, czasy)
+    
+    if (indeks == 0) 
+      return(1)
+    else
+      return(model_km$surv[indeks])
+  } 
+  else {
+    if (s_t_plus > 0)
+      return(exp((log(s_t_plus) / t_plus) * t0))
+    else
+      return(0)
+  }
+}
+wyniki <- data.frame()
+
+for (n in wartosci_n){
+  v_t0 <- numeric(M)
+  v_2t0 <- numeric(M)
+  
+  for (i in 1:M){
+    dane_sym <- funkcja_1(n, lambda, alpha, t0)
+    est_t0 <- oblicz_wartosc_bhk(dane_sym$czas, dane_sym$cenzura, t0)
+    est_2t0 <- oblicz_wartosc_bhk(dane_sym$czas, dane_sym$cenzura, 2 * t0)
+    v_t0[i] <- est_t0
+    v_2t0[i] <- est_2t0
+  }
+  
+  temp_df <- data.frame(n = as.factor(n), est_t0 = v_t0, est_2t0 = v_2t0)
+  wyniki <- rbind(wyniki, temp_df)
+}
+```
+
+```{r wykres4, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Oszacowania funkcji przeżycia dla danych cenzurowanych I-go typu"}
+library(dplyr)
+library(tidyr)
+
+wyniki_long <- wyniki %>%
+  pivot_longer(cols = c("est_t0", "est_2t0"), names_to = "Punkt", values_to = "Wartosc")
+
+wyniki_long$Punkt <- factor(wyniki_long$Punkt, 
+                            levels = c("est_t0", "est_2t0"), 
+                            labels = c("'Punkt' ~ t[0]", "'Punkt' ~ 2 * t[0]"))
+
+ggplot(wyniki_long, aes(x = Wartosc)) + 
+  geom_histogram(aes(y = after_stat(density)), bins = 30, fill = "#38b5cf", color = "white", alpha = 0.7) +
+  facet_wrap(vars(n, Punkt), nrow = 3, scales = "free_y", labeller = label_parsed) +
+  labs(title = expression(paste("Histogramy dla n = 30, 50, 100 w punktach ", t[0], " i ", 2*t[0], " dla parametrów ",   lambda == 0.5, ", ", alpha == 1.2, ", ", t[0] == 2.2)),
+       x = "Oszacowana wartość funkcji przeżycia", y = "Gęstość") + theme_minimal() +  theme(panel.spacing = unit(1, "cm"))
+```
+
+Analiza otrzymanych histogramów (zobacz rysunek \ref{fig:wykres4}) nie potwierdza przypuszczenia o normalności rozkładu estymatora w badanych punktach. Otrzymane rozkłady są nieregularne i niesymetryczne, co świadczy o tym, że przy takich liczebnościach prób przybliżenie rozkładem normalnym jest niewystarczające.
+
+\newpage
+
+# Estymacja średniego czasu życia
+
+## Algorytmy estymacji średniego czasu życia
+
+Celem było przygotowanie programu służącego do estymacji średniego czasu życia z wykorzystaniem dwóch estymatorów funkcji przeżycia: Kaplana-Meiera oraz Fleminga-Harringtona. W obu przypadkach należało zastosować metodę przedłużenia ogona zaproponowaną przez Browna, Hollandera i Kowara. Różnica między estymatorami sprowadza się jedynie do sposobu wyznaczania funkcji przeżycia, kontrolowanego w funkcji `survfit` parametrem `type`. Pozostałe elementy algorytmu są identyczne dla obu podejść. Z tego powodu zamiast tworzyć dwa odrębne programy przygotowano jedno uniwersalne rozwiązanie, w którym użytkownik może wybrać estymator za pomocą parametru `type`.
+
+\vspace{0.5cm}
+
+```{r}
+library(survival)
+
+srednia_z <- function(czas, status, type){
+  model <- survfit(Surv(czas, status) ~ 1, type = type)
+  
+  czasy <- c(0, model$time)
+  przezycie <- c(1, model$surv)
+  punkty <- length(model$time)
+  pole <- 0
+  
+  for (i in 1:punkty){
+    szerokosc <- czasy[i+1] - czasy[i]
+    wysokosc <- przezycie[i]
+    pole <- pole + (szerokosc * wysokosc)
+  }
+  
+  t_plus <- max(model$time)
+  s_t_plus <- model$surv[punkty]
+  pole_ogon <- 0
+  
+  if (s_t_plus > 0){
+    lambda <- -log(s_t_plus) / t_plus
+    pole_ogon <- s_t_plus / lambda
+  }
+  
+  sredni_czas <- pole + pole_ogon
+  
+  return(sredni_czas)
+}
+```
+
+\newpage
+
+## Porównawcza analiza średniego czasu do remisji
+
+Korzystając z napisanego wyżej programu, wyznaczono oszacowane średnie czasy do remisji choroby pacjentów leczonych lekiem A i lekiem B.
+
+\vspace{0.5cm}
+
+```{r}
+wynik_km_A <- srednia_z(dane.A$time, dane.A$status, "kaplan-meier")
+wynik_fh_A <- srednia_z(dane.A$time, dane.A$status, "fleming-harrington")
+
+wynik_km_B <- srednia_z(dane.B$time, dane.B$status, "kaplan-meier")
+wynik_fh_B <- srednia_z(dane.B$time, dane.B$status, "fleming-harrington")
+```
+
+\vspace{0.3cm}
+
+Wyniki oszacowań widoczne są poniżej.
+
+\vspace{0.3cm}
+
+```{r tab:Tabela1, echo=FALSE, message=FALSE, warning=FALSE}
+library(kableExtra)
+
+tabela_wyniki <- data.frame(
+  Grupa = c("Lek A", "Lek B"),
+  KM_BHK = c(wynik_km_A, wynik_km_B),
+  FH_BHK = c(wynik_fh_A, wynik_fh_B)
+)
+
+kable(tabela_wyniki, format = "latex", booktabs = TRUE, digits = 4, align = "c", col.names = c("Lek", "Estymator Kaplana-Meiera", "Estymator Fleminga-Harringtona"),
+      caption = "Oszacowanie średniego czasu do remisji \\label{tab:Tabela1}")%>% kable_styling(latex_options = c("hold_position"))
+```
+
+\vspace{0.5cm}
+
+Analiza oszacowań średniego czasu do remisji (Tabela \ref{tab:Tabela1}) wskazuje na przewagę leku B. Niezależnie od zastosowanego estymatora, średni czas oczekiwania na ustąpienie objawów jest krótszy w grupie pacjentów przyjmujących lek B w porównaniu do grupy leku A. Wartości te, przekraczające czas trwania badania ($1$ rok), wynikają z zastosowania estymacji ogona metodą Browna, Hollandera i Kowara, która uwzględnia prognozowany czas leczenia pacjentów, u których remisja nie nastąpiła przed końcem obserwacji.
+
+\newpage
+
+# Wnioskowanie przedziałowe
+
+## Konstrukcja przedziałów ufności
+
+Zaimplementowana poniżej funkcja służy do wyznaczania realizacji przedziałów ufności dla średniego czasu do progresji choroby. Funkcja przyjmuje jako argumenty dane cenzurowane losowo, poziom ufności oraz wartość graniczną $\tau$, zwracając dolną i górną granicę przedziału ufności oraz oszacowania punktowe.
+
+\vspace{0.3cm}
+
+```{r, echo=TRUE}
+library(survival)
+
+sredni_czas_przezycia <- function(czas, status, poziom_ufnosci, tau){
+  model <- survfit(Surv(czas, status) ~ 1)
+  czasy <- c(0, model$time)
+  przezycie <- c(1, model$surv)
+  r <- model$n.risk
+  d <- model$n.event
+  punkty <- length(model$time)
+  mu_tau <- 0
+  for (i in 1:length(czasy)){
+    t_start <- czasy[i]
+    if (t_start >= tau)   break
+    if (i < length(czasy))  t_end <- min(czasy[i+1], tau)
+    else    t_end <- tau
+    mu_tau <- mu_tau + ((t_end - t_start) * przezycie[i])
+  }
+  suma <- 0
+  pole <- 0 
+  for (i in 1:punkty){
+    t_biezacy <- model$time[i]
+    pole <- pole + ((t_biezacy - czasy[i]) * przezycie[i])
+    if (t_biezacy > tau)    break
+    if (d[i] > 0 && (r[i] - d[i]) > 0){
+      calka_reszta <- mu_tau - pole
+      if (calka_reszta < 0) 
+        calka_reszta <- 0
+      suma <- suma + (calka_reszta^2) * (d[i] / (r[i] * (r[i] - d[i])))
+    }
+  }
+  alpha <- 1 - poziom_ufnosci
+  z <- qnorm(1 - alpha/2)
+  dolna_granica <- mu_tau - z * sqrt(suma)
+  gorna_granica <- mu_tau + z * sqrt(suma)
+  return(c(P = mu_tau, L = dolna_granica, U = gorna_granica))
+}
+```
+
+\newpage
+
+## Estymacja przedziałowa średniego czasu do progresji choroby
+
+Analizowano dane z badania klinicznego, którego celem było sprawdzenie, czy stopień zaawansowania choroby ma związek z czasem do jej progresji. Dane dotyczyły dwóch stadiów: niskiego stopnia zaawansowania (II) oraz wysokiego stopnia zaawansowania (IIIA). Na podstawie uzyskanych danych wyznaczono realizację przedziałów ufności na poziomie ufności $0.95$, dla średniego czasu do progresji choroby w dwóch badanych grupach pacjentek. Obliczenia przeprowadzono dla trzech wybranych wartości $\tau$, z których dwie odpowiadają maksymalnym czasom obserwacji w poszczególnych grupach.
+
+\vspace{0.3cm}
+
+```{r tab:Tabela2, echo=FALSE}
+czasy_ii <- c(28, 89, 175, 195, 309, 377, 393, 421, 447, 462, 709, 744, 770, 1106, 1206)
+status_ii <- c(1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0)
+
+czasy_iiia <- c(34, 88, 137, 199, 280, 291, 299, 300, 309, 351, 358, 369, 369, 370, 375, 382, 392, 429, 451, 1119)
+status_iiia <- c(1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0)
+
+tau_1 <- 1500
+tau_2 <- 1206
+tau_3 <- 1119
+
+wynik_ii_1 <- sredni_czas_przezycia(czasy_ii, status_ii, poziom_ufnosci = 0.95, tau = tau_1)
+wynik_iiia_1 <- sredni_czas_przezycia(czasy_iiia, status_iiia, poziom_ufnosci = 0.95, tau = tau_1)
+
+wynik_ii_2 <- sredni_czas_przezycia(czasy_ii, status_ii, poziom_ufnosci = 0.95, tau = tau_2)
+wynik_iiia_2 <- sredni_czas_przezycia(czasy_iiia, status_iiia, poziom_ufnosci = 0.95, tau = tau_2)
+
+wynik_ii_3 <- sredni_czas_przezycia(czasy_ii, status_ii, poziom_ufnosci = 0.95, tau = tau_3)
+wynik_iiia_3 <- sredni_czas_przezycia(czasy_iiia, status_iiia, poziom_ufnosci = 0.95, tau = tau_3)
+
+wyniki_tabela <- data.frame(
+  Grupa = c("niski (II)", "wysoki (IIIA)", "niski (II)", "wysoki (IIIA)", "niski (II)", "wysoki (IIIA)"),
+  Tau = c(tau_1, tau_1, tau_2, tau_2, tau_3, tau_3),
+  Punkt = c(wynik_ii_1["P"], wynik_iiia_1["P"], wynik_ii_2["P"], wynik_iiia_2["P"], wynik_ii_3["P"], wynik_iiia_3["P"]),
+  Dolna = c(wynik_ii_1["L"], wynik_iiia_1["L"], wynik_ii_2["L"], wynik_iiia_2["L"], wynik_ii_3["L"], wynik_iiia_3["L"]),
+  Gorna = c(wynik_ii_1["U"], wynik_iiia_1["U"], wynik_ii_2["U"], wynik_iiia_2["U"], wynik_ii_3["U"], wynik_iiia_3["U"])
+)
+wyniki_tabela$Przedzial <- paste0("[", round(wyniki_tabela$Dolna, 3), "; ", round(wyniki_tabela$Gorna, 3), "]")
+
+tabela <- wyniki_tabela[, c("Grupa", "Tau", "Punkt", "Przedzial")]
+
+kable(tabela, digits = 3, format = "latex", booktabs = TRUE, align = "c",
+      col.names = c("Stopień zaawansowania", "$\\tau$", "Oszacowanie punktowe", "Przedział ufności"),
+      caption = "Wyniki estymacji średniego czasu do progresji choroby \\label{tab:Tabela2}", escape = FALSE, linesep = c("", "\\addlinespace"))%>%
+      kable_styling(latex_options = c("hold_position"))
+```
+\vspace{0.5cm}
+
+Analiza uzyskanych wyników (zobacz Tabela \ref{tab:Tabela2}) wskazuje na to, że wyższy stopień zaawansowania raka jajnika (IIIA) wiąże się ze znacznie gorszym rokowaniem. Dla $\tau=1206$ średni czas do progresji w grupie o niskim stopniu zaawansowania wynosi około $774$ dni, podczas gdy w grupie o wysokim stopniu jest on dwukrotnie krótszy ($387$ dni). Podobna zależność występuje również dla $\tau=1119$, gdzie wartości te wynoszą około $726$ i $380$ dni. Niewielkie nakładanie się przedziałów ufności nie zmienia ogólnego wniosku, pacjentki z mniej zaawansowaną chorobą cechują się lepszym rokowaniem niż te ze stadium IIIA.
+
+\newpage
+
+# Testowanie hipotez o równości rozkładów w grupach o różnym stopniu zaawansowania choroby
+
+## Weryfikacja hipotezy o zgodności rozkładów czasu przeżycia
+
+Przeprowadzono weryfikację hipotezy o jednakowym rozkładzie czasu do progresji choroby w dwóch analizowanych grupach pacjentek. W tym celu zastosowano kilka rodzajów testów statystycznych, przyjmując poziom istotności równy $0.05$.
+
+```{r, echo=FALSE}
+dane <- data.frame(
+  czas = c(czasy_ii, czasy_iiia),
+  status = c(status_ii, status_iiia),
+  grupa = factor(c(rep("II", length(czasy_ii)), rep("IIIA", length(czasy_iiia))))
+)
+```
+
+```{r, echo=TRUE}
+model <- survfit(Surv(czas, status) ~ grupa, data = dane)
+```
+
+### **Test log-rank**
+
+```{r, echo=TRUE}
+test_logrank <- surv_pvalue(model, method = "log-rank")
+```
+
+```{r, echo=FALSE}
+kable(test_logrank[, c("method", "pval")], digits = 4, format = "latex", booktabs = TRUE, align = "c",
+      col.names = c("Metoda", "Wartość p"), caption = "Wynik testu Log-rank")%>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+Wniosek: Ponieważ wartość $p$ jest mniejsza od przyjętego poziomu istotności $\alpha = 0.05$ ($0.0183 < 0.05$), odrzucamy hipotezę zerową.
+
+### **Test Gehana-Breslowa**
+
+```{r, echo=TRUE}
+test_GB <- surv_pvalue(model, method = "gehan-breslow")
+```
+
+```{r, echo=FALSE}
+kable(test_GB[, c("method", "pval")], digits = 4, format = "latex", booktabs = TRUE, align = "c",
+      col.names = c("Metoda", "Wartość p"), caption = "Wynik testu Gehana-Breslowa")%>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+Wniosek: Ponieważ $p > 0.05$, nie ma podstaw do odrzucenia hipotezy zerowej.
+
+### **Test Tarone’a-Warego**
+
+```{r, echo=TRUE}
+test_TW <- surv_pvalue(model, method = "tarone-ware")
+```
+
+```{r, echo=FALSE}
+kable(test_TW[, c("method", "pval")], digits = 4, format = "latex", booktabs = TRUE, align = "c",
+      col.names = c("Metoda", "Wartość p"), caption = "Wynik testu Tarone-Ware")%>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+Wniosek: Wynik jest na granicy istotności ($p \approx 0.05$), ale formalnie $p > 0.05$, więc nie ma podstaw do odrzucenia hipotezy zerowej.
+
+### **Test Peto-Peto**
+
+```{r, echo=TRUE}
+test_PP <- surv_pvalue(model, method = "peto-peto")
+```
+
+```{r, echo=FALSE}
+kable(test_PP[, c("method", "pval")], digits = 4, format = "latex", booktabs = TRUE, align = "c",
+      col.names = c("Metoda", "Wartość p"), caption = "Wynik testu Peto-Peto")%>%
+  kable_styling(latex_options = c("hold_position"))
+```
+
+Wniosek: Ponieważ $p > 0.05$, nie ma podstaw do odrzucenia hipotezy zerowej.
+
+\vspace{0.5cm}
+
+**Ogólne wnioski**
+
+* Różnice między wynikami testów wynikają z tego, że każdy z nich inaczej waży zdarzenia w czasie trwania badania. Testy Gehana-Breslowa i Peto-Peto kładą największy nacisk na zdarzenia z początku obserwacji, dlatego ich wyniki sugerują brak istotnych różnic między grupami we wczesnym okresie. Test Log-rank traktuje wszystkie zdarzenia jednakowo, dzięki czemu lepiej wykrywa rozbieżności pojawiające się w późniejszym czasie. Test Tarone-Ware, stosujący wagi pośrednie, dał wynik na granicy istotności ($p \approx 0.055$), co wskazuje na stopniowe narastanie różnic w czasie.
+
+* Testy Gehana-Breslowa czy Peto-Peto nie odrzuciły hipotezy ($p > 0.05$), co oznacza, że że na początku obserwacji przebieg choroby w obu grupach wygląda podobnie.
+
+* Wynik testu Log-rank prowadzi do odrzucenia hipotezy o jednakowym przebiegu choroby. Otrzymany efekt sugeruje, że stadium zaawansowania nowotworu stanowi istotny czynnik różnicujący pacjentki.
+
+* Korzystniejsza sytuacja pacjentek w stadium II ujawnia się dopiero wraz z upływem czasu. W dalszych fazach obserwacji progresja choroby występuje u nich znacznie rzadziej niż w grupie IIIA.
+
+\newpage
+
+## Wizualizacja funkcji przeżycia i wag statystyk testowych
+
+Wyznaczymy wykresy estymatorów Kaplana-Meiera funkcji przeżycia dla czasu do progresji choroby w dwóch badanych grupach oraz funkcji wagowych w statystykach testowych rozważanych wyżej.
+
+* Wykres przedstawiający estymatory Kaplana-Meiera: 
+
+```{r wykres5, echo=FALSE, fig.width=8, fig.height=6, fig.align='center', message=FALSE, warning=FALSE, fig.cap="Wykresy estymatorów Kaplana-Meiera funkcji przeżycia dla czasu do progresji choroby"}
+library(survival)
+library(ggplot2)
+
+dane_ii <- data.frame(time = czasy_ii, status = status_ii)
+dane_iiia <- data.frame(time = czasy_iiia, status = status_iiia)
+
+km.fit.ii <- survfit(Surv(time, status) ~ 1, data = dane_ii, type = "kaplan-meier")
+km.fit.iiia <- survfit(Surv(time, status) ~ 1, data = dane_iiia, type = "kaplan-meier")
+
+km.df.ii <- data.frame(time = c(0, km.fit.ii$time), surv = c(1, km.fit.ii$surv), grupa = "Stadium II")
+km.df.iiia <- data.frame(time = c(0, km.fit.iiia$time), surv = c(1, km.fit.iiia$surv), grupa = "Stadium IIIA")
+km.df.all <- rbind(km.df.ii, km.df.iiia)
+
+ggplot(data = km.df.all, aes(x = time, y = surv, color = grupa)) + geom_step(linewidth = 1) + ylim(0, 1) +
+  labs(x = "Czas", y = "Prawdopodobieństwo braku progresji", color = "Stopień zaawansowania") +
+  theme_minimal() + scale_color_manual(values = c("Stadium II" = "#5ec44f", "Stadium IIIA" = "#d44c61"))
+
+```
+
+Wykres \ref{fig:wykres5} wizualnie potwierdza, że pacjentki z niższym stopniem zaawansowania mają większe szanse na długotrwałe przeżycie bez progresji choroby w porównaniu do pacjentek ze stadium zaawansowanego. Różnica między grupami jest bardzo wyraźna. Linia dla stadium II stabilizuje się na poziomie powyżej $0.50$, podczas gdy linia dla stadium IIIA spada poniżej $0.25$.
+
+\newpage
+
+* Wykres przedstawiający wykresy funkcji wagowych w statystykach testowych:
+
+```{r wykres6, echo=FALSE, fig.width=8, fig.height=6, fig.align='center', message=FALSE, warning=FALSE, fig.cap="Wykresy funkcji wagowych w statystykach testowych"}
+library(survival)
+
+czasy <- c(czasy_ii, czasy_iiia)
+status <- c(status_ii, status_iiia)
+dane <- data.frame(czasy, status)
+
+km_fit <- survfit(Surv(czasy, status) ~ 1, data = dane)
+
+censor <- km_fit$n.event > 0
+czasy_zdarzen <- km_fit$time[censor]
+pr <- km_fit$surv[censor]
+r <- km_fit$n.risk[censor]
+D <- length(czasy_zdarzen)
+
+logrank <- rep(1, D)
+gehan_breslow <- r
+tarone_ware <- sqrt(r)
+peto_peto <- pr
+
+logrank_p <- logrank / sum(logrank)
+gehan_breslow_p <- gehan_breslow / sum(gehan_breslow)
+tarone_ware_p <- tarone_ware / sum(tarone_ware)
+peto_peto_p <- peto_peto / sum(peto_peto)
+
+df_plot <- data.frame(Czas = czasy_zdarzen, "log-rank" = logrank_p, "Gehan-Breslow" = gehan_breslow_p, "Tarone-Ware" = tarone_ware_p, "Peto-Peto" = peto_peto_p, check.names = FALSE)
+
+df_long <- pivot_longer(df_plot, cols = -Czas, names_to = "Test", values_to = "Waga")
+
+ggplot(df_long, aes(x = Czas, y = Waga, color = Test)) + geom_line(linewidth = 1) +
+  labs(x = "Czas", y = "Waga") +
+  theme_minimal() + scale_color_manual(values = c("log-rank" = "#f00a28", "Gehan-Breslow" = "#891594", "Tarone-Ware" = "#3d9ee3", "Peto-Peto" = "#e6da39"))
+```
+
+Na wykresie \ref{fig:wykres6} można zauważyć, że test log-rank stosuje stałe wagi, traktując jednakowo zdarzenia w całym czasie obserwacji, co sprzyja wykrywaniu różnic o stałym charakterze. W przeciwieństwie do niego, testy Gehan-Breslow, Peto-Peto i Tarone-Ware używają wag malejących, co czyni je bardziej czułymi na różnice pojawiające się we wczesnej fazie badania. Zatem w przypadku występowania wczesnych efektów testy ważone wykażą wyższą moc i niższe wartości $p$ niż test log-rank.
