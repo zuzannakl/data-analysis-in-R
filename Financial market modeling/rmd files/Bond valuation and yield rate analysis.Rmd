@@ -1,0 +1,256 @@
+---
+title: "Wycena obligacji i analiza rentowności"
+author: "Zuzanna Klaman"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  pdf_document:
+    toc: true
+    number_sections: true
+    latex_engine: xelatex
+    keep_tex: true
+    dev: cairo_pdf
+header-includes:
+- \usepackage{longtable}
+- \usepackage{booktabs}
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage{polyglossia}
+- \setdefaultlanguage{polish}
+- \renewcommand{\contentsname}{Spis treści}
+- \usepackage{placeins}
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE, cache=TRUE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+knitr::opts_chunk$set(dev = "CairoPDF")
+options(encoding = "UTF-8")
+```
+
+# Wprowadzenie
+
+Projekt prezentuje implementację wybranych zagadnień związanych z rynkiem obligacji w języku R. Analiza obejmuje między innymi wycenę obligacji, obliczanie ceny brudnej, rentowność do wykupu (YTM) oraz analizę scenariuszową.
+
+---
+
+
+# 1. Cena brudna obligacji
+
+Obliczenie ceny brudnej obligacji PS0123.
+
+```{r}
+kurs_czysty <- 102.40
+cena_nominalna <- 1000
+oprocentowanie <- 0.025 
+
+data_rozliczenia <- as.Date("2019-02-14")
+data_ostatniego_kuponu <- as.Date("2019-01-25")
+data_nastepnego_kuponu <- as.Date("2020-01-25")
+
+cena_czysta <- kurs_czysty / 100 * cena_nominalna
+kupon_roczny <- cena_nominalna * oprocentowanie
+
+dni_narosle <- as.numeric(data_rozliczenia - data_ostatniego_kuponu)
+dni_w_okresie <- as.numeric(data_nastepnego_kuponu - data_ostatniego_kuponu)
+
+narosle_odsetki <- kupon_roczny * (dni_narosle / dni_w_okresie)
+
+cena_brudna <- cena_czysta + narosle_odsetki
+cena_brudna
+
+```
+
+---
+
+# 2. Rentowność obligacji (YTM)
+
+Jedna sztuka obligacji OK0521 została kupiona na Giełdzie Papierów Wartościowych w dniu D=20.02.2019 po kursie 96,90. Sprawdzimy, jaka jest rentowność tej inwestycji dla  kupującego (zakładając, że będzie trzymał obligację do dnia wykupu), jeśli prowizja maklerska jaką płaci kupujący wynosi 0,12% wartości transakcji. Przyjmujemy tutaj, że dzień rozliczenia transakcji to D+2.
+
+```{r}
+kurs <- 96.90
+prowizja_procent <- 0.0012
+wartosc_nominalna <- 100
+
+prowizja <- kurs * prowizja_procent
+calkowity_koszt <- kurs + prowizja
+
+zakup <- as.Date("2019-02-20")
+rozliczenie <- zakup + 2
+wykup <- as.Date("2021-05-25")
+
+t <- as.numeric(wykup - rozliczenie)
+t1 <- t / 365
+
+YTM <- (wartosc_nominalna / calkowity_koszt)^(1 / t1) - 1
+print(YTM * 100)
+```
+
+---
+
+# 3. Wycena obligacji zerokuponowej
+
+Dana jest obligacja zerokuponowa, w przypadku której do terminu wykupu pozostały dwa lata i 115 dni. Jej wartość nominalna wynosi 100 PLN, a wymagana stopa dochodu inwestora 10%. Dokonamy wyceny obligacji.
+
+```{r}
+FV <- 100
+r <- 0.10
+lata <- 2
+dni <- 115
+
+T_lata <- lata + (dni / 365)
+
+cena_obligacji <- FV / (1 + r)^T_lata
+round(cena_obligacji, 4)
+```
+
+---
+
+# 4. Stopa zwrotu inwestora
+
+Inwestor zakupił obligację zerokuponową w przypadku której do terminu wykupu pozostało 10 lat. Rynkowa stopa rentowności przy zakupie wynosiła 7,25%. Inwestor ten, po 25 miesiącach sprzedał obligację, przy stopie rentowności 6,75%. Obliczymyn jaką stopę zwrotu uzyskał inwestor na tej obligacji.
+
+```{r}
+YTM1 <- 0.0725
+YTM2 <- 0.0675
+t1 <- 10 - (25 / 12)
+t2 <- 25 / 12
+
+P1 <- 1 / (1 + YTM1)^10 
+P2 <- 1 / (1 + YTM2)^(t1)
+
+r <- (P2 / P1) - 1
+print(r * 100)
+```
+
+---
+
+# 5. Analiza scenariuszowa obligacji zerokuponowych
+
+Inwestor rozważa zakup obligacji zerokuponowych o terminie do wykupu jeden, trzy lub pięć lat. W tym momencie rentowności obligacji zerokuponowych 1-, 2-, 3-, 4-, 5-letnich to odpowiednio 3,1%, 3,8%, 4%, 4,2%, 4,3% przy czym rentowność jest wyrażona w skali roku z kapitalizacją co pół roku. Inwestor planuje sprzedaż kupowanych dziś obligacji za rok. Rozważa przy tym dwa następujące scenariusze:
+
+* I. Stopy procentowe za rok będą takie sama jak dziś i dlatego rentowności  obligacji 1-, 2-, 3-, 4- i 5-letnich wyniosą odpowiednio 3,1%, 3,8%, 4%, 4,2%  4,3%
+
+* II. Stopy procentowe (dla wszystkich okresów) za rok będą o $0,5$ p.p. wyższe niż dziś tzn. rentowność obligacji 1-rocznych wyniesie 3,6%, dwuletnich 4,3% itd, przy czym rentowność jest tu również wyrażona w skali roku z kapitalizacją co pół roku.
+
+Sprawdzimy, które z obligacji powinien zakupić inwestor w każdym z tych dwóch scenariuszy, aby uzyskać jak najwyższą stopę zwrotu z tej rocznej inwestycji.
+
+```{r}
+wartosc_nominalna <- 100
+liczba_kapitalizacji <- 2
+
+r_0 <- c(0.031, 0.038, 0.040, 0.042, 0.043)
+
+terminy_zakupu <- 1:5
+ceny_zakupu <- wartosc_nominalna / (1 + r_0 / liczba_kapitalizacji)^(terminy_zakupu * liczba_kapitalizacji)
+
+
+# I scenariusz:
+
+r_s1 <- r_0
+
+ceny_sprzedazy_s1 <- numeric(5)
+ceny_sprzedazy_s1[1] <- wartosc_nominalna
+
+terminy_sprzedazy <- 1:4
+r_sprzedazy_s1 <- r_s1[1:4] 
+ceny_sprzedazy_s1[2:5] <- wartosc_nominalna / (1 + r_sprzedazy_s1 / liczba_kapitalizacji)^(terminy_sprzedazy * liczba_kapitalizacji)
+stopa_zwrotu_s1 <- (ceny_sprzedazy_s1 / ceny_zakupu) - 1
+
+print(stopa_zwrotu_s1)
+
+# II scenariusz:
+
+r_s2 <- r_0 + 0.005
+
+ceny_sprzedazy_s2 <- numeric(5)
+ceny_sprzedazy_s2[1] <- wartosc_nominalna
+
+r_sprzedazy_s2 <- r_s2[1:4]
+ceny_sprzedazy_s2[2:5] <- wartosc_nominalna / (1 + r_sprzedazy_s2 / liczba_kapitalizacji)^(terminy_sprzedazy * liczba_kapitalizacji)
+stopa_zwrotu_s2 <- (ceny_sprzedazy_s2 / ceny_zakupu) - 1
+
+cat("Scenariusz I: Najlepsza obligacja:", which.max(stopa_zwrotu_s1), "- letnia\n")
+cat("Scenariusz II: Najlepsza obligacja:", which.max(stopa_zwrotu_s2), "- letnia\n")
+
+print(stopa_zwrotu_s2)
+```
+
+---
+
+# 6. YTM obligacji kuponowej
+
+Obliczymy YTM dla 30-letniej obligacji o wartości nominalnej 1000 PLN i kuponach 40 PLN płaconych na koniec każdego roku. Cena obligacji wynosi 1200 PLN.
+
+```{r}
+FV <- 1000
+Ck <- 40
+cena <- 1200
+n <- 30
+
+roznica <- function(ytm) {
+  wartosc_kuponow <- sum(Ck / (1 + ytm)^(1:n))
+  wartosc_nominalna <- FV / (1 + ytm)^n
+  P <- wartosc_kuponow + wartosc_nominalna
+  return(P - cena)
+}
+
+wynik <- uniroot(roznica, lower = 0, upper = 1)
+
+ytm <- wynik$root
+print(ytm * 100)
+```
+
+---
+
+# 7. YTM obligacji PS0728
+
+Rozpatrujemy obligacje skarbowe serii PS0728. Obliczymy YTM tej obligacji kupionej na przetargu, który był rozliczany 25.01.2023.
+
+```{r}
+wartosc_nominalna <- 1000
+r_kupon <- 0.075
+kupon_roczny <- wartosc_nominalna * r_kupon
+
+data_rozliczenia <- as.Date("2023-01-25") 
+data_wykupu <- as.Date("2028-07-25")
+data_ostatniego_kuponu <- as.Date("2022-07-25")
+data_nastepnego_kuponu <- as.Date("2023-07-25")
+
+
+cena_czysta <- 1070
+dni_narosle <- as.numeric(data_rozliczenia - data_ostatniego_kuponu)
+dni_w_okresie <- as.numeric(data_nastepnego_kuponu - data_ostatniego_kuponu)
+
+narosle_odsetki <- kupon_roczny * (dni_narosle / dni_w_okresie)
+
+cena_brudna <- cena_czysta + narosle_odsetki
+
+
+daty_platnosci_kuponow <- as.Date(c(
+  "2023-07-25", 
+  "2024-07-25", 
+  "2025-07-25", 
+  "2026-07-27",
+  "2027-07-26",
+  "2028-07-25"
+))
+
+przeplywy <- rep(kupon_roczny, length(daty_platnosci_kuponow))
+przeplywy[length(przeplywy)] <- przeplywy[length(przeplywy)] + wartosc_nominalna
+
+czas_do_platnosci <- as.numeric(daty_platnosci_kuponow - data_rozliczenia) / dni_w_okresie
+
+ytm_f <- function(ytm) {
+  suma_pv_przeplywow <- sum(przeplywy / (1 + ytm)^czas_do_platnosci)
+  return(suma_pv_przeplywow - cena_brudna)
+}
+
+wynik_ytm <- uniroot(ytm_f, interval = c(0, 1))$root
+wynik_ytm * 100
+
+```

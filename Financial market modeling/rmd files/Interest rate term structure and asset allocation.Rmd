@@ -1,0 +1,174 @@
+---
+title: "Struktura terminowa stóp procentowych i analiza portfelowa"
+author: "Zuzanna Klaman"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  pdf_document:
+    toc: true
+    number_sections: true
+    latex_engine: xelatex
+    keep_tex: true
+    dev: cairo_pdf
+header-includes:
+- \usepackage{longtable}
+- \usepackage{booktabs}
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage{polyglossia}
+- \setdefaultlanguage{polish}
+- \renewcommand{\contentsname}{Spis treści}
+- \usepackage{placeins}
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE, cache=TRUE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+knitr::opts_chunk$set(dev = "CairoPDF")
+options(encoding = "UTF-8")
+```
+
+# Wprowadzenie
+
+Projekt obejmuje zagadnienia modelowania rynków finansowych, w szczególności: analizę struktury terminowej stóp procentowych, wyznaczanie stóp spot i forward, wycenę obligacji oraz analizę portfela inwestycyjnego.
+
+---
+
+# 1. Stopa zwrotu obligacji przy zmianie struktury terminowej
+
+Załóżmy, że funkcja stopy terminowej miała postać $r(t) = 0,01 + 0,005t$, gdy dziesięcioletnia obligacja zerokuponowa została zakupiona. Pół roku później, gdy sprzedano obligację funkcja stopy terminowej miała postać $r(t) = 0,02 + 0,001t$. Obliczymy stopę zwrotu z tej inwestycji?
+
+```{r}
+t <- 10
+t2 <- 10-0.5
+
+r1 <- function(t){
+  r1 <- 0.01 + 0.005 * t
+}
+
+r2 <- function(t){
+  r2 <- 0.02 + 0.001 * t
+}
+
+całka1_B <- exp(-(integrate(r1, lower = 0, upper = t)$value))
+
+całka2_B <- exp(-(integrate(r2, lower = 0, upper = t2)$value))
+
+r <- log(całka2_B / całka1_B)
+r_wynik <- exp(r) - 1
+r_wynik
+```
+
+---
+
+# 2. Stopy spot i forward – obligacje zerokuponowe
+
+Załączony plik TermStructureZero.csv zawiera symulowane dane dotyczące 20 obligacji zerokuponowych. Dla tych danych wyznaczymy stopę stop dla n lat (zerokuponową), oraz stopę terminową dla n-tego roku.
+
+```{r}
+library(dplyr)
+
+data <- read.csv("TermStructureZero.csv")
+
+data <- data %>%
+  mutate(
+    SpotRate = (100/Quote)^(1/Maturity)-1,
+    SpotRate_prev = lag(SpotRate, default = 0),
+    Maturity_prev = lag(Maturity, default = 0),
+    ForwardRate =
+      ((1+SpotRate)^Maturity) /
+      ((1+SpotRate_prev)^Maturity_prev) - 1
+  ) %>%
+  select(Maturity, Quote, SpotRate, ForwardRate)
+
+data
+```
+
+---
+
+# 3. Analiza stóp zwrotu akcji
+
+Dla notowań spółek giełdowych A,B,C z pliku NotowaniaABC.csv wyznaczymy 
+
+* oczekiwane zwroty i odchylenia standardowe tych zwrotów dla każdej ze spółek A,B,C;
+* oczekiwany zwrot i odchylenie standardowe zwrotów dla portfela z wagami w_A=0.2,  w_B=0.3,  w_C=0.5.
+
+## 3.1 Oczekiwane zwroty i ryzyko
+
+```{r}
+notowania <- read.csv("NotowaniaABC.csv")
+
+Pt <- notowania[-1,]
+Pt_1 <- notowania[-nrow(notowania),]
+
+stopy <- (Pt-Pt_1)/Pt_1
+
+oczekiwane <- sapply(stopy,mean)
+sd_zwrotow <- sapply(stopy,sd)
+
+data.frame(
+  ExpectedReturn = oczekiwane,
+  StdDev = sd_zwrotow
+)
+```
+
+---
+
+## 3.2 Parametry portfela
+
+```{r}
+wagi <- c(0.2,0.3,0.5)
+
+ER_portfel <- sum(wagi*oczekiwane)
+Sigma <- cov(stopy)
+
+wariancja <- t(wagi)%*%Sigma%*%wagi
+sd_portfel <- sqrt(wariancja)
+
+ER_portfel
+sd_portfel
+```
+
+---
+
+# 4. Portfel minimalnej wariancji (analitycznie)
+
+Dla notowań spółek giełdowych A,B,C z pliku NotowaniaABC.csv wyznaczymy
+
+* wagi portfela o minimalnej wariancji;
+* wagi portfela o minimalnej wariancji i oczekiwanym zwrocie 15%.
+
+```{r}
+C_inv <- solve(Sigma)
+u <- matrix(1,nrow=1,ncol=3)
+mu <- matrix(oczekiwane,nrow=1)
+
+w_min <- as.numeric(u%*%C_inv)/
+  as.numeric(u%*%C_inv%*%t(u))
+
+w_min
+```
+
+---
+
+## Portfel minimalnej wariancji przy zadanym zwrocie
+
+```{r}
+mi_target <- 0.15
+
+A <- as.numeric(u%*%C_inv%*%t(u))
+B <- as.numeric(u%*%C_inv%*%t(mu))
+C <- as.numeric(mu%*%C_inv%*%t(mu))
+
+lambda1 <- (C - B*mi_target)/(A*C-B^2)
+lambda2 <- (A*mi_target - B)/(A*C-B^2)
+
+w <- lambda1*(u%*%C_inv) +
+     lambda2*(mu%*%C_inv)
+
+as.numeric(w)
+```

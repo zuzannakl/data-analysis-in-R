@@ -1,0 +1,253 @@
+---
+title: "Analiza przepływów pieniężnych i modelowanie spłat długu"
+author: "Zuzanna Klaman"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  pdf_document:
+    toc: true
+    number_sections: true
+    latex_engine: xelatex
+    keep_tex: true
+    dev: cairo_pdf
+header-includes:
+- \usepackage{longtable}
+- \usepackage{booktabs}
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage{polyglossia}
+- \setdefaultlanguage{polish}
+- \renewcommand{\contentsname}{Spis treści}
+- \usepackage{placeins}
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE, cache=TRUE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+knitr::opts_chunk$set(dev = "CairoPDF")
+options(encoding = "UTF-8")
+```
+
+# Wprowadzenie
+
+Projekt przedstawia wybrane zagadnienia z matematyki finansowej zaimplementowane w języku **R**. Obejmuje obliczenia wartości bieżącej, wartości przyszłej, analizę inwestycji, konwersję stóp procentowych oraz modelowanie spłat kredytu.
+
+Wykorzystany pakiet:
+
+```{r}
+library(FinCal)
+```
+
+---
+
+# 1. Wartość bieżąca długu
+
+Dłużnik spłaca pierwszą ratę długu na koniec pierwszego roku w wysokości 8 000 PLN oraz drugą na koniec drugiego roku w wysokości 6 000 PLN. 
+Chcemy policzyć obecną wartość długu przy założeniu oprocentowania R = 4%.
+
+```{r}
+C1 <- 8000
+C2 <- 6000
+r <- 0.04
+
+P <- C1*(1+r)^(-1) + C2*(1+r)^(-2)
+P
+
+splaty <- c(-C1, -C2)
+pv.uneven(r = r, cf = splaty)
+```
+
+---
+
+# 2. Wartość przyszła oszczędności
+
+Wpłacamy na konto dzisiaj 5000 PLN oraz przez kolejne 11 miesiecy po 1 000 PLN. Chcemy obliczyć jaką kwotę na koncie ujrzymy na koniec roku, jeśli oprocentowanie w skali roku to R = 11%? Zakładamy kapitalizację miesięczną i wpłaty na początku każdego kolejnego miesiąca.
+
+```{r}
+C0 <- 5000
+C <- 1000
+R <- 0.11
+n <- 12
+r <- R/n
+
+FV_C0 <- fv.simple(r = r, n = n, pv = -C0)
+FV_C  <- fv(r = r, n = n-1, pv = 0, pmt = -C, type = 1)
+
+FV <- FV_C0 + FV_C
+FV
+```
+
+---
+
+# 3. Wewnętrzna stopa zwrotu (IRR)
+
+Firma zainwestowała 5.0 mln PLN w projekt inwestycyjny, który przynosi następujące przepływy pieniezne: 1.0 mln PLN na koniec trzeciego roku, 2.0 mln PLN na koniec siódmego roku, 3.0 mln PLN na koniec dwunastego roku. Chcemy wyznaczyć IRR tej inwestycji.
+
+```{r}
+koszty <- c(-5, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 3)
+
+irr_wynik <- irr(koszty)
+round(irr_wynik * 100, 4)
+```
+
+---
+
+# 4. Nominalne stopy procentowe równoważne
+
+Efektywna roczna stopa procentowa wynosi 15%. Obliczyny nominalną równoważną stopę procentową przy różnej kapitalizacji.
+
+```{r}
+ref <- 0.15
+
+nominalna <- function(m){
+  ((1 + ref)^(1 / m) - 1) * m
+}
+
+round(nominalna(4)*100, 4)   # kwartalna
+round(nominalna(12)*100, 4)  # miesięczna
+round(nominalna(365)*100, 4) # dzienna
+round(log(1 + ref)*100, 4)     # ciągła
+```
+
+---
+
+# 5. Wyznaczenie wymaganej stopy procentowej
+
+Na rachunek (z kapitalizacja miesięczną) chcemy wpłacić 7000 PLN teraz oraz co miesiac przez pół roku kwoty w wysokości 800 PLN. Policzymy jakie najniższe oprocentowanie w skali roku pozwoli nam zgromadzić po pół roku kwotę w wysokości 12000 PLN?
+
+```{r}
+stopa <- discount.rate(
+  n = 6,
+  fv = 12000,
+  pmt = -800,
+  pv = -7000,
+  type = 0
+)
+
+round(stopa*12*100, 4)
+```
+
+---
+
+# 6. Kalkulator rat kredytu
+
+Implementacja funkcji obliczającej harmonogram spłat dla różnych metod spłaty kredytu.
+
+* A spłaca kredyt w jednakowych ratach,
+* B spłaca kredyt metodą "jednakowych rat kapitałowych tzn. każda rata spłaty jest równa K/n plus odsetki od kwoty pozostałej do spłaty na początku okresu,
+* C w pierwszych n-1 ratach spłaca jedynie odsetki za kończący się okres, a w ostatniej spłaca cały kapitał K plus odsetki za n-ty okres,
+* D spłaca całość zobowiązań na koniec n-tego okresu, przy czym  odsetki są kapitalizowane na koniec każdego okresu.
+
+```{r}
+KalkulatorRatalny <- function(TypeFlag = c("A", "B", "C", "D"), K, n, r) {
+  
+  if (TypeFlag == "A"){
+    ratyA <- rep(pmt(r = r, n = n, pv = -K, fv = 0, type = 0), n)
+    ratyA <- round(ratyA, 2)
+    cat("wektor rat dla A = (", paste(ratyA, collapse = ", "), ")\n", sep = "")
+  }
+  
+  if (TypeFlag == "B"){
+    pozostalo <- K
+    ratyB <- numeric(n)
+    for (i in 1:n){
+      rata <- (K / n) + r * pozostalo
+      ratyB[i] <- rata
+      pozostalo <- pozostalo - (K / n)
+    }
+    ratyB <- round(ratyB, 2)
+    cat("wektor rat dla B = (", paste(ratyB, collapse = ", "), ")\n", sep = "")
+  }
+  
+  if (TypeFlag == "C"){
+    ratyC <- rep(round(r * K, 2), n)
+    ratyC[n] <- round(K + r * K, 2)
+    cat("wektor rat dla C = (", paste(ratyC, collapse = ", "), ")\n", sep = "")
+  }
+  
+  if (TypeFlag == "D"){
+    rata_n <- fv.simple(r = r, n = n, pv = -K)
+    ratyD <- rep(0, n)
+    ratyD[n] <- rata_n
+    cat("wektor rat dla D = (", paste(ratyD, collapse = ", "), ")\n", sep = "")
+  }
+}
+
+K <- 1000
+n <- 4
+r <- 0.2
+
+KalkulatorRatalny("A", K = K, n = n, r = r)
+KalkulatorRatalny("B", K = K, n = n, r = r)
+KalkulatorRatalny("C", K = K, n = n, r = r)
+KalkulatorRatalny("D", K = K, n = n, r = r)
+
+```
+
+---
+
+# 7. Porównanie ofert kredytowych (RRSO)
+
+Bank może nam udzielić kredytu w wysokości 16 000 PLN na okres 4 lat. Możemy wybrac pomiędzy jednym z dwóch sposobów spłaty kredytu:
+
+* spłata kredytu w dwóch ratach po 10000 PLN każda (na koniec drugiego i czwartego roku) 
+* spłata kredytu w czterech ratach po 5000 PLN każda.
+
+Policzymy ile wyniesie RRSO w obydwu propozycjach.
+
+```{r}
+koszty1 <- c(16000, 0, -10000, 0, -10000)
+rrso1 <- irr(koszty1)
+
+koszty2 <- c(16000, -5000, -5000, -5000, -5000)
+rrso2 <- irr(koszty2)
+
+rrso1*100
+rrso2*100
+```
+
+---
+
+# 8. RRSO kredytu z dodatkowymi opłatami
+
+Bank może nam udzielić kredytu w wysokości 200 000 PLN na okres 5 lat. Kredyt będzie spłacany metodą równych rat kapitałowych tj. każda w wysokości 40 000 PLN, płatne na początku roku. Stopa procentowa wynosi 4%. W chwili t=0 pobierane są następujące opłaty
+
+* prowizja 6000 PLN,
+* opłata przygotowawcza 2000 PLN,
+* wycena zabezpiecenia 1000 PLN.
+
+Ponadto na początku każdego okresu płacone jest również ubezpieczenie spłaty w wysokości 2% kwoty kredytu pozostałej do spłaty. Obliczymy RRSO tego kredytu.
+
+
+```{r}
+kredyt <- 200000
+stopa <- 0.04
+rata <- 40000
+ubez <- 0.02
+
+oplaty <- 6000 + 2000 + 1000
+
+cf0 <- kredyt - oplaty - kredyt * ubez
+
+zadluzenie <- kredyt
+cf <- c(cf0)
+
+for(i in 1:5){
+  odsetki <- zadluzenie * stopa
+  if(i<5)
+    ubezp <- (zadluzenie - rata) * ubez
+  else
+    ubezp <- 0
+
+  cf <- c(cf, -(rata + odsetki + ubezp))
+  zadluzenie <- zadluzenie - rata
+}
+
+irr(cf)*100
+```
+
+---
